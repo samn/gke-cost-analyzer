@@ -10,6 +10,11 @@ import (
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
 )
 
+// podLister is an interface for listing pods, enabling testing without a real cluster.
+type podLister interface {
+	ListPods(ctx context.Context) ([]kube.PodInfo, error)
+}
+
 func labelConfig() cost.LabelConfig {
 	return cost.LabelConfig{
 		TeamLabel:     teamLabel,
