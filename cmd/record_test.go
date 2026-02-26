@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -159,6 +161,73 @@ func TestRecordSnapshot(t *testing.T) {
 	// Both pods have the same labels, so they aggregate into 1 group → 1 row
 	if receivedRows != 1 {
 		t.Errorf("expected 1 BQ row, got %d", receivedRows)
+	}
+}
+
+func TestRecordSnapshotDryRun(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+			kube.NewTestPodInfo("web-2", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+		},
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	// Pass nil writer for dry-run
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300)
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("reading captured output: %v", err)
+	}
+	output := buf.String()
+
+	// Verify JSON output is present
+	if !strings.Contains(output, `"team":"platform"`) {
+		t.Errorf("expected JSON with team field, got: %s", output)
+	}
+	if !strings.Contains(output, `"workload":"web"`) {
+		t.Errorf("expected JSON with workload field, got: %s", output)
+	}
+	if !strings.Contains(output, "Would write 1 records (2 pods)") {
+		t.Errorf("expected dry-run summary message, got: %s", output)
+	}
+
+	// Verify the JSON line is valid
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var snapshot bigquery.CostSnapshot
+	if err := json.Unmarshal([]byte(lines[0]), &snapshot); err != nil {
+		t.Fatalf("first line is not valid JSON: %v", err)
+	}
+	if snapshot.PodCount != 2 {
+		t.Errorf("expected pod count 2, got %d", snapshot.PodCount)
 	}
 }
 

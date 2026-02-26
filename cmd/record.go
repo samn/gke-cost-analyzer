@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -22,6 +23,7 @@ var (
 	bqDataset      string
 	bqTable        string
 	clusterName    string
+	dryRun         bool
 )
 
 func init() {
@@ -30,6 +32,7 @@ func init() {
 	recordCmd.Flags().StringVar(&bqDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
 	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (required)")
+	recordCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Log rows that would be written without writing to BigQuery")
 	rootCmd.AddCommand(recordCmd)
 }
 
@@ -70,14 +73,20 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
-	// Create authenticated HTTP client for BigQuery
-	httpClient, err := authHTTPClient(ctx)
-	if err != nil {
-		return fmt.Errorf("creating authenticated client: %w", err)
+	var writer *bigquery.Writer
+	if dryRun {
+		fmt.Println("Dry-run mode: rows will be logged to stdout, not written to BigQuery")
+	} else {
+		// Create authenticated HTTP client for BigQuery
+		httpClient, err := authHTTPClient(ctx)
+		if err != nil {
+			return fmt.Errorf("creating authenticated client: %w", err)
+		}
+		writer = bigquery.NewWriter(bqProject, bqDataset, bqTable,
+			bigquery.WithWriterHTTPClient(httpClient))
+		fmt.Printf("Recording costs every %s to %s.%s.%s\n",
+			recordInterval, bqProject, bqDataset, bqTable)
 	}
-
-	writer := bigquery.NewWriter(bqProject, bqDataset, bqTable,
-		bigquery.WithWriterHTTPClient(httpClient))
 
 	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
@@ -87,9 +96,6 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		region:      region,
 		clusterName: clusterName,
 	}
-
-	fmt.Printf("Recording costs every %s to %s.%s.%s\n",
-		recordInterval, bqProject, bqDataset, bqTable)
 
 	ticker := time.NewTicker(recordInterval)
 	defer ticker.Stop()
@@ -132,6 +138,19 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
 		snapshots[i] = aggregatedToSnapshot(a, now, sc, intervalSecs)
+	}
+
+	if writer == nil {
+		for _, s := range snapshots {
+			data, err := json.Marshal(s)
+			if err != nil {
+				return fmt.Errorf("marshaling snapshot: %w", err)
+			}
+			fmt.Println(string(data))
+		}
+		fmt.Printf("[%s] Would write %d records (%d pods)\n",
+			now.Format("15:04:05"), len(snapshots), len(pods))
+		return nil
 	}
 
 	if err := writer.Write(ctx, snapshots); err != nil {

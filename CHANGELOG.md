@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- `record` command: `--dry-run` flag to log rows without writing to BigQuery
 - `watch` command: SUBTYPE column is now hidden when --subtype-label is not set
 - Filter out non-Autopilot pods by requiring node names with `gk3-` prefix
 - `watch` command: interactive column sorting with number keys (1-7 or 1-8) and asc/desc toggle
