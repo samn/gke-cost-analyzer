@@ -33,7 +33,10 @@ func loadPrices(ctx context.Context) ([]pricing.Price, error) {
 	}
 
 	// Fetch from API
-	client := pricing.NewCatalogClient()
+	client, err := pricing.NewCatalogClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating catalog client: %w", err)
+	}
 	prices, err := client.FetchPrices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fetching prices: %w", err)

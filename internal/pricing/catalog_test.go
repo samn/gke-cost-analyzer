@@ -74,7 +74,10 @@ func TestFetchPricesFromFixture(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewCatalogClient(WithBaseURL(srv.URL))
+	client, err := NewCatalogClient(WithHTTPClient(srv.Client()), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
 	prices, err := client.FetchPrices(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +156,10 @@ func TestFetchPricesPagination(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewCatalogClient(WithBaseURL(srv.URL))
+	client, err := NewCatalogClient(WithHTTPClient(srv.Client()), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
 	prices, err := client.FetchPrices(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +192,10 @@ func TestFetchPricesMultipleRegions(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewCatalogClient(WithBaseURL(srv.URL))
+	client, err := NewCatalogClient(WithHTTPClient(srv.Client()), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
 	prices, err := client.FetchPrices(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -216,8 +225,11 @@ func TestFetchPricesNoAutopilotSKUs(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewCatalogClient(WithBaseURL(srv.URL))
-	_, err := client.FetchPrices(context.Background())
+	client, err := NewCatalogClient(WithHTTPClient(srv.Client()), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FetchPrices(context.Background())
 	if err == nil {
 		t.Fatal("expected error for no Autopilot SKUs")
 	}
@@ -229,8 +241,11 @@ func TestFetchPricesAPIError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewCatalogClient(WithBaseURL(srv.URL))
-	_, err := client.FetchPrices(context.Background())
+	client, err := NewCatalogClient(WithHTTPClient(srv.Client()), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.FetchPrices(context.Background())
 	if err == nil {
 		t.Fatal("expected error for API error response")
 	}

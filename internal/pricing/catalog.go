@@ -8,22 +8,23 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 const (
-	// Compute Engine service ID in the Cloud Billing Catalog
-	computeEngineServiceID = "6F81-5844-456A"
-	billingCatalogBaseURL  = "https://cloudbilling.googleapis.com/v1"
+	// Kubernetes Engine service ID in the Cloud Billing Catalog
+	kubernetesEngineServiceID = "CCD8-9BF1-090E"
+	billingCatalogBaseURL     = "https://cloudbilling.googleapis.com/v1"
 )
 
 // SKU description substrings for matching Autopilot Pod-level pricing.
 var autopilotSKUMatchers = []skuMatcher{
-	{substr: "Autopilot Pod Minimum", resource: CPU, tier: OnDemand},
-	{substr: "Autopilot Pod mCPU", resource: CPU, tier: OnDemand},
-	{substr: "Autopilot Pod Memory", resource: Memory, tier: OnDemand},
-	{substr: "Autopilot Spot Pod Minimum", resource: CPU, tier: Spot},
-	{substr: "Autopilot Spot Pod mCPU", resource: CPU, tier: Spot},
-	{substr: "Autopilot Spot Pod Memory", resource: Memory, tier: Spot},
+	{substr: "Autopilot Pod mCPU Requests", resource: CPU, tier: OnDemand},
+	{substr: "Autopilot Pod Memory Requests", resource: Memory, tier: OnDemand},
+	{substr: "Autopilot Spot Pod mCPU Requests", resource: CPU, tier: Spot},
+	{substr: "Autopilot Spot Pod Memory Requests", resource: Memory, tier: Spot},
 }
 
 type skuMatcher struct {
@@ -51,20 +52,47 @@ func WithBaseURL(url string) CatalogOption {
 	return func(cc *CatalogClient) { cc.baseURL = url }
 }
 
-// NewCatalogClient creates a new CatalogClient.
-func NewCatalogClient(opts ...CatalogOption) *CatalogClient {
+// NewCatalogClient creates a new CatalogClient. If no custom HTTP client is
+// provided, it uses Google Application Default Credentials for authentication.
+func NewCatalogClient(opts ...CatalogOption) (*CatalogClient, error) {
 	cc := &CatalogClient{
-		httpClient: http.DefaultClient,
-		baseURL:    billingCatalogBaseURL,
+		baseURL: billingCatalogBaseURL,
 	}
 	for _, opt := range opts {
 		opt(cc)
 	}
-	return cc
+	if cc.httpClient == nil {
+		ts, err := google.DefaultTokenSource(context.Background(),
+			"https://www.googleapis.com/auth/cloud-billing.readonly",
+			"https://www.googleapis.com/auth/cloud-platform",
+		)
+		if err != nil {
+			return nil, fmt.Errorf("obtaining Google credentials: %w\nRun: gcloud auth application-default login", err)
+		}
+		cc.httpClient = &http.Client{
+			Transport: &tokenTransport{base: http.DefaultTransport, tokenSource: ts},
+		}
+	}
+	return cc, nil
+}
+
+// tokenTransport wraps an http.RoundTripper and injects an OAuth2 bearer token.
+type tokenTransport struct {
+	base        http.RoundTripper
+	tokenSource oauth2.TokenSource
+}
+
+func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tok, err := t.tokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("obtaining access token: %w", err)
+	}
+	r := req.Clone(req.Context())
+	r.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+	return t.base.RoundTrip(r)
 }
 
 // FetchPrices fetches Autopilot pod pricing from the Cloud Billing Catalog API.
-// The billing catalog is a public API that doesn't require authentication.
 func (cc *CatalogClient) FetchPrices(ctx context.Context) ([]Price, error) {
 	var allPrices []Price
 	pageToken := ""
@@ -141,7 +169,7 @@ type unitPrice struct {
 }
 
 func (cc *CatalogClient) fetchSKUPage(ctx context.Context, pageToken string) ([]catalogSKU, string, error) {
-	reqURL := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, computeEngineServiceID)
+	reqURL := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, kubernetesEngineServiceID)
 	if pageToken != "" {
 		reqURL += "&pageToken=" + url.QueryEscape(pageToken)
 	}
