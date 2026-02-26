@@ -1,0 +1,55 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/samn/autopilot-cost-analyzer/internal/cost"
+	"github.com/samn/autopilot-cost-analyzer/internal/kube"
+	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
+)
+
+func labelConfig() cost.LabelConfig {
+	return cost.LabelConfig{
+		TeamLabel:     teamLabel,
+		WorkloadLabel: workloadLabel,
+		SubtypeLabel:  subtypeLabel,
+	}
+}
+
+func loadPrices(ctx context.Context) ([]pricing.Price, error) {
+	cache, err := pricing.NewCache()
+	if err != nil {
+		return nil, fmt.Errorf("creating price cache: %w", err)
+	}
+
+	cached, err := cache.Load()
+	if err != nil {
+		return nil, fmt.Errorf("loading cached prices: %w", err)
+	}
+	if cached != nil {
+		return cached.Prices, nil
+	}
+
+	// Fetch from API
+	client := pricing.NewCatalogClient()
+	prices, err := client.FetchPrices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetching prices: %w", err)
+	}
+
+	if err := cache.Save(prices); err != nil {
+		// Log but don't fail — prices are still usable
+		fmt.Printf("Warning: failed to cache prices: %v\n", err)
+	}
+
+	return prices, nil
+}
+
+func newPodLister() (*kube.PodLister, error) {
+	var opts []kube.PodListerOption
+	if namespace != "" {
+		opts = append(opts, kube.WithNamespace(namespace))
+	}
+	return kube.NewPodLister(opts...)
+}

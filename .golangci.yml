@@ -10,6 +10,26 @@ linters:
     - gocritic
     - revive
 
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (net/http.ResponseWriter).Write
+        - (*text/tabwriter.Writer).Flush
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*encoding/json.Encoder).Encode
+        - (*encoding/json.Decoder).Decode
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: true
+    staticcheck:
+      checks:
+        - "all"
+        - "-SA1019"
+
 formatters:
   enable:
     - gofmt
