@@ -29,6 +29,7 @@ func TestListPods(t *testing.T) {
 				},
 			},
 			Spec: corev1.PodSpec{
+				NodeName: "gk3-cluster-pool-abc123",
 				Containers: []corev1.Container{
 					{
 						Name: "web",
@@ -56,6 +57,7 @@ func TestListPods(t *testing.T) {
 				},
 			},
 			Spec: corev1.PodSpec{
+				NodeName: "gk3-cluster-spot-def456",
 				Containers: []corev1.Container{
 					{
 						Name: "main",
@@ -222,6 +224,7 @@ func TestListPodsNamespaceFilter(t *testing.T) {
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "pod1", Namespace: "ns1"},
 			Spec: corev1.PodSpec{
+				NodeName: "gk3-cluster-pool-1",
 				Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
 				}}},
@@ -231,6 +234,7 @@ func TestListPodsNamespaceFilter(t *testing.T) {
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "pod2", Namespace: "ns2"},
 			Spec: corev1.PodSpec{
+				NodeName: "gk3-cluster-pool-2",
 				Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
 				}}},
@@ -275,6 +279,75 @@ func TestListPodsAPIError(t *testing.T) {
 	}
 	if err.Error() != "API server unavailable" {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestListPodsFiltersNonAutopilotNodes(t *testing.T) {
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+
+	pods := []runtime.Object{
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "autopilot-pod", Namespace: "default"},
+			Spec: corev1.PodSpec{
+				NodeName:   "gk3-cluster-pool-abc123",
+				Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "standard-pod", Namespace: "default"},
+			Spec: corev1.PodSpec{
+				NodeName:   "gke-cluster-pool-def456",
+				Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+		},
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "unscheduled-pod", Namespace: "default"},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+		},
+	}
+
+	client := fake.NewSimpleClientset(pods...)
+	pl, err := NewPodLister(WithClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := pl.ListPods(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 pod (autopilot only), got %d", len(result))
+	}
+	if result[0].Name != "autopilot-pod" {
+		t.Errorf("expected autopilot-pod, got %s", result[0].Name)
+	}
+}
+
+func TestIsAutopilotNode(t *testing.T) {
+	tests := []struct {
+		name     string
+		nodeName string
+		expected bool
+	}{
+		{"autopilot node", "gk3-cluster-pool-abc123", true},
+		{"standard node", "gke-cluster-pool-abc123", false},
+		{"empty node name", "", false},
+		{"other prefix", "custom-node-1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAutopilotNode(tt.nodeName); got != tt.expected {
+				t.Errorf("isAutopilotNode(%q) = %v, want %v", tt.nodeName, got, tt.expected)
+			}
+		})
 	}
 }
 

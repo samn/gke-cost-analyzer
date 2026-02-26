@@ -3,6 +3,7 @@ package kube
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -91,6 +92,9 @@ func (pl *PodLister) ListPods(ctx context.Context) ([]PodInfo, error) {
 
 	pods := make([]PodInfo, 0, len(podList.Items))
 	for i := range podList.Items {
+		if !isAutopilotNode(podList.Items[i].Spec.NodeName) {
+			continue
+		}
 		pods = append(pods, extractPodInfo(&podList.Items[i]))
 	}
 	return pods, nil
@@ -126,6 +130,12 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 		IsSpot:          isSpotPod(pod),
 		Phase:           pod.Status.Phase,
 	}
+}
+
+// isAutopilotNode returns true if the node name indicates a GKE Autopilot node.
+// Autopilot nodes use the "gk3-" prefix, while Standard nodes use "gke-".
+func isAutopilotNode(nodeName string) bool {
+	return strings.HasPrefix(nodeName, "gk3-")
 }
 
 // isSpotPod detects whether a pod is running on GKE Autopilot Spot.

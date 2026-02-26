@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - `watch` command: SUBTYPE column is now hidden when --subtype-label is not set
+- Filter out non-Autopilot pods by requiring node names with `gk3-` prefix
 
 ### Added
 
