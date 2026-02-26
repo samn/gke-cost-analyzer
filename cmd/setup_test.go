@@ -1,14 +1,20 @@
 package cmd
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSetupRequiresProject(t *testing.T) {
-	// Reset flags
+	saved := setupProject
+	defer func() { setupProject = saved }()
 	setupProject = ""
 
-	rootCmd.SetArgs([]string{"setup"})
-	err := rootCmd.Execute()
+	err := runSetup(rootCmd, nil)
 	if err == nil {
 		t.Fatal("expected error when --project is missing")
+	}
+	if !strings.Contains(err.Error(), "--project") {
+		t.Errorf("error should mention --project, got: %v", err)
 	}
 }

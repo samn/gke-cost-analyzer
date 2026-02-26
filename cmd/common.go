@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
@@ -40,7 +41,7 @@ func loadPrices(ctx context.Context) ([]pricing.Price, error) {
 
 	if err := cache.Save(prices); err != nil {
 		// Log but don't fail — prices are still usable
-		fmt.Printf("Warning: failed to cache prices: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to cache prices: %v\n", err)
 	}
 
 	return prices, nil

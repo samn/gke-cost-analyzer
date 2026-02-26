@@ -30,7 +30,6 @@ type PodInfo struct {
 type PodLister struct {
 	client    kubernetes.Interface
 	namespace string
-	now       func() time.Time
 }
 
 // PodListerOption configures a PodLister.
@@ -46,16 +45,10 @@ func WithClient(c kubernetes.Interface) PodListerOption {
 	return func(pl *PodLister) { pl.client = c }
 }
 
-// WithNow sets a custom time function (for testing).
-func WithNow(fn func() time.Time) PodListerOption {
-	return func(pl *PodLister) { pl.now = fn }
-}
-
 // NewPodLister creates a PodLister using the default kubeconfig.
 func NewPodLister(opts ...PodListerOption) (*PodLister, error) {
 	pl := &PodLister{
 		namespace: "", // all namespaces
-		now:       time.Now,
 	}
 	for _, opt := range opts {
 		opt(pl)
@@ -128,7 +121,7 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 		CPURequestMilli: cpuMilli,
 		MemRequestBytes: memBytes,
 		CPURequestVCPU:  float64(cpuMilli) / 1000.0,
-		MemRequestGB:    float64(memBytes) / (1024 * 1024 * 1024),
+		MemRequestGB:    float64(memBytes) / 1e9,
 		StartTime:       startTime,
 		IsSpot:          isSpotPod(pod),
 		Phase:           pod.Status.Phase,
@@ -152,8 +145,9 @@ func isSpotPod(pod *corev1.Pod) bool {
 }
 
 // NewTestPodInfo creates a PodInfo for testing purposes.
+// memMB is in megabytes (1 MB = 1,000,000 bytes) to match billing units (GB = 10^9 bytes).
 func NewTestPodInfo(name, namespace string, cpuMilli int64, memMB int64, startTime time.Time, isSpot bool, labels map[string]string) PodInfo {
-	memBytes := memMB * 1024 * 1024
+	memBytes := memMB * 1_000_000
 	return PodInfo{
 		Name:            name,
 		Namespace:       namespace,
@@ -161,7 +155,7 @@ func NewTestPodInfo(name, namespace string, cpuMilli int64, memMB int64, startTi
 		CPURequestMilli: cpuMilli,
 		MemRequestBytes: memBytes,
 		CPURequestVCPU:  float64(cpuMilli) / 1000.0,
-		MemRequestGB:    float64(memBytes) / (1024 * 1024 * 1024),
+		MemRequestGB:    float64(memBytes) / 1e9,
 		StartTime:       startTime,
 		IsSpot:          isSpot,
 		Phase:           corev1.PodRunning,

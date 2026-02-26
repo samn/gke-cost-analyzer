@@ -36,8 +36,8 @@ func TestCalculateOnDemandPod(t *testing.T) {
 		t.Errorf("CPU cost = %f, want ~0.035", cost.CPUCost)
 	}
 
-	// Memory: 0.5 GB (512MB) * 2h * 0.004 = 0.004 (approximately, 512MB = 0.5GB)
-	expectedMemGB := 512.0 / 1024.0 // 0.5 GB
+	// Memory: 512 MB = 0.512 GB (SI), 0.512 * 2h * 0.004 = 0.004096
+	expectedMemGB := 512.0 / 1000.0 // 0.512 GB (SI units)
 	expectedMemCost := expectedMemGB * 2 * 0.004
 	if !approxEqual(cost.MemCost, expectedMemCost, 0.0001) {
 		t.Errorf("Memory cost = %f, want ~%f", cost.MemCost, expectedMemCost)
@@ -66,9 +66,10 @@ func TestCalculateSpotPod(t *testing.T) {
 		t.Errorf("Spot CPU cost = %f, want 0.01", cost.CPUCost)
 	}
 
-	// Memory: 1.0 GB * 1h * 0.0012 = 0.0012
-	if !approxEqual(cost.MemCost, 0.0012, 0.0001) {
-		t.Errorf("Spot Memory cost = %f, want 0.0012", cost.MemCost)
+	// Memory: 1024 MB = 1.024 GB (SI), 1.024 * 1h * 0.0012 = 0.0012288
+	expectedSpotMem := 1.024 * 0.0012
+	if !approxEqual(cost.MemCost, expectedSpotMem, 0.0001) {
+		t.Errorf("Spot Memory cost = %f, want %f", cost.MemCost, expectedSpotMem)
 	}
 }
 
@@ -141,6 +142,50 @@ func TestCalculateAll(t *testing.T) {
 	}
 }
 
+func TestCalculateFutureStartTime(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	futureStart := now.Add(1 * time.Hour) // start time in the future
+
+	pod := kube.NewTestPodInfo("future", "default", 1000, 1024, futureStart, false, nil)
+
+	calc := NewCalculator("us-central1", testPriceTable(), func() time.Time { return now })
+	cost := calc.Calculate(pod)
+
+	if cost.DurationHours != 0 {
+		t.Errorf("expected 0 duration for future start time, got %f", cost.DurationHours)
+	}
+	if cost.TotalCost != 0 {
+		t.Errorf("expected 0 cost for future start time, got %f", cost.TotalCost)
+	}
+	// But cost per hour should still be non-zero
+	if cost.CostPerHour == 0 {
+		t.Error("expected non-zero cost per hour even with future start time")
+	}
+}
+
+func TestCalculateMissingRegionPrices(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	pod := kube.NewTestPodInfo("app", "default", 1000, 1024, startTime, false, nil)
+
+	// Use a price table that doesn't have the requested region
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "europe-west1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.04},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	cost := calc.Calculate(pod)
+
+	// No matching prices → zero cost
+	if cost.TotalCost != 0 {
+		t.Errorf("expected 0 cost for unknown region, got %f", cost.TotalCost)
+	}
+	if cost.CostPerHour != 0 {
+		t.Errorf("expected 0 $/hr for unknown region, got %f", cost.CostPerHour)
+	}
+}
+
 func TestCostPerHour(t *testing.T) {
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-3 * time.Hour)
@@ -152,8 +197,8 @@ func TestCostPerHour(t *testing.T) {
 	cost := calc.Calculate(pod)
 
 	// CPU per hour: 2.0 * 0.035 = 0.07
-	// Mem per hour: 4.0 GB * 0.004 = 0.016
-	expectedPerHour := 2.0*0.035 + 4.0*0.004
+	// Mem per hour: 4.096 GB * 0.004 = 0.016384 (4096 MB = 4.096 GB in SI units)
+	expectedPerHour := 2.0*0.035 + 4.096*0.004
 	if !approxEqual(cost.CostPerHour, expectedPerHour, 0.0001) {
 		t.Errorf("CostPerHour = %f, want %f", cost.CostPerHour, expectedPerHour)
 	}

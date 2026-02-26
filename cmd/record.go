@@ -50,6 +50,9 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	if clusterName == "" {
 		return fmt.Errorf("--cluster-name is required")
 	}
+	if recordInterval <= 0 {
+		return fmt.Errorf("--interval must be positive")
+	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
@@ -79,6 +82,11 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
 	intervalSecs := int64(recordInterval.Seconds())
+	sc := snapshotConfig{
+		projectID:   bqProject,
+		region:      region,
+		clusterName: clusterName,
+	}
 
 	fmt.Printf("Recording costs every %s to %s.%s.%s\n",
 		recordInterval, bqProject, bqDataset, bqTable)
@@ -87,7 +95,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	defer ticker.Stop()
 
 	// Run once immediately
-	if err := recordSnapshot(ctx, lister, calc, lc, writer, intervalSecs); err != nil {
+	if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
@@ -97,14 +105,21 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, calc, lc, writer, intervalSecs); err != nil {
+			if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs); err != nil {
 				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
 			}
 		}
 	}
 }
 
-func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, intervalSecs int64) error {
+// snapshotConfig holds the metadata needed to convert aggregated costs to BigQuery snapshots.
+type snapshotConfig struct {
+	projectID   string
+	region      string
+	clusterName string
+}
+
+func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64) error {
 	pods, err := lister.ListPods(ctx)
 	if err != nil {
 		return fmt.Errorf("listing pods: %w", err)
@@ -116,7 +131,7 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
-		snapshots[i] = aggregatedToSnapshot(a, now, intervalSecs)
+		snapshots[i] = aggregatedToSnapshot(a, now, sc, intervalSecs)
 	}
 
 	if err := writer.Write(ctx, snapshots); err != nil {
@@ -128,12 +143,12 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 	return nil
 }
 
-func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, intervalSecs int64) bigquery.CostSnapshot {
+func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {
 	return bigquery.CostSnapshot{
 		Timestamp:       ts,
-		ProjectID:       bqProject,
-		Region:          region,
-		ClusterName:     clusterName,
+		ProjectID:       sc.projectID,
+		Region:          sc.region,
+		ClusterName:     sc.clusterName,
 		Namespace:       a.Namespace,
 		Team:            a.Key.Team,
 		Workload:        a.Key.Workload,

@@ -40,6 +40,9 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	if region == "" {
 		return fmt.Errorf("--region is required")
 	}
+	if watchInterval <= 0 {
+		return fmt.Errorf("--interval must be positive")
+	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()

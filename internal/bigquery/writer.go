@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -82,7 +82,7 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 	rows := make([]insertRow, len(snapshots))
 	for i, s := range snapshots {
 		rows[i] = insertRow{
-			InsertID: fmt.Sprintf("%s-%s-%s-%d", s.Team, s.Workload, s.Subtype, s.Timestamp.UnixNano()),
+			InsertID: fmt.Sprintf("%s-%s-%s-%s-%s-%t-%d", s.ProjectID, s.ClusterName, s.Namespace, s.Team, s.Workload, s.IsSpot, s.Timestamp.UnixNano()),
 			JSON:     snapshotToRow(s),
 		}
 	}
@@ -119,12 +119,13 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 	}
 
 	if len(result.InsertErrors) > 0 {
+		var details []string
 		for _, ie := range result.InsertErrors {
 			for _, e := range ie.Errors {
-				log.Printf("BigQuery insert error at row %d: %s - %s", ie.Index, e.Reason, e.Message)
+				details = append(details, fmt.Sprintf("row %d: %s - %s", ie.Index, e.Reason, e.Message))
 			}
 		}
-		return fmt.Errorf("BigQuery insert had %d row errors", len(result.InsertErrors))
+		return fmt.Errorf("BigQuery insert had %d row errors: %s", len(result.InsertErrors), strings.Join(details, "; "))
 	}
 
 	return nil

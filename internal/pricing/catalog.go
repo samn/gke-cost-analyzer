@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -17,19 +18,18 @@ const (
 
 // SKU description substrings for matching Autopilot Pod-level pricing.
 var autopilotSKUMatchers = []skuMatcher{
-	{substr: "Autopilot Pod Minimum", resource: CPU, tier: OnDemand, isCPU: true},
-	{substr: "Autopilot Pod mCPU", resource: CPU, tier: OnDemand, isCPU: true},
-	{substr: "Autopilot Pod Memory", resource: Memory, tier: OnDemand, isCPU: false},
-	{substr: "Autopilot Spot Pod Minimum", resource: CPU, tier: Spot, isCPU: true},
-	{substr: "Autopilot Spot Pod mCPU", resource: CPU, tier: Spot, isCPU: true},
-	{substr: "Autopilot Spot Pod Memory", resource: Memory, tier: Spot, isCPU: false},
+	{substr: "Autopilot Pod Minimum", resource: CPU, tier: OnDemand},
+	{substr: "Autopilot Pod mCPU", resource: CPU, tier: OnDemand},
+	{substr: "Autopilot Pod Memory", resource: Memory, tier: OnDemand},
+	{substr: "Autopilot Spot Pod Minimum", resource: CPU, tier: Spot},
+	{substr: "Autopilot Spot Pod mCPU", resource: CPU, tier: Spot},
+	{substr: "Autopilot Spot Pod Memory", resource: Memory, tier: Spot},
 }
 
 type skuMatcher struct {
 	substr   string
 	resource ResourceType
 	tier     Tier
-	isCPU    bool
 }
 
 // CatalogClient fetches pricing data from the Cloud Billing Catalog API.
@@ -141,12 +141,12 @@ type unitPrice struct {
 }
 
 func (cc *CatalogClient) fetchSKUPage(ctx context.Context, pageToken string) ([]catalogSKU, string, error) {
-	url := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, computeEngineServiceID)
+	reqURL := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, computeEngineServiceID)
 	if pageToken != "" {
-		url += "&pageToken=" + pageToken
+		reqURL += "&pageToken=" + url.QueryEscape(pageToken)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating request: %w", err)
 	}

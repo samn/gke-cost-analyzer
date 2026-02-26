@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,6 +76,51 @@ func TestWriteSnapshots(t *testing.T) {
 	}
 }
 
+func TestWriteMultipleSnapshots(t *testing.T) {
+	var receivedBody insertAllRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(insertAllResponse{})
+	}))
+	defer srv.Close()
+
+	writer := NewWriter("proj", "ds", "tbl", WithWriterBaseURL(srv.URL))
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	snapshots := []CostSnapshot{
+		{Timestamp: ts, ProjectID: "proj", Team: "alpha", Workload: "svc1", PodCount: 2},
+		{Timestamp: ts, ProjectID: "proj", Team: "beta", Workload: "svc2", PodCount: 5, IsSpot: true},
+		{Timestamp: ts, ProjectID: "proj", Team: "alpha", Workload: "svc3", PodCount: 1},
+	}
+
+	err := writer.Write(context.Background(), snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(receivedBody.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(receivedBody.Rows))
+	}
+
+	// Verify all rows have unique insert IDs
+	ids := make(map[string]bool)
+	for _, row := range receivedBody.Rows {
+		if ids[row.InsertID] {
+			t.Errorf("duplicate insert ID: %s", row.InsertID)
+		}
+		ids[row.InsertID] = true
+	}
+
+	// Verify second row is the beta/svc2 one
+	if receivedBody.Rows[1].JSON["team"] != "beta" {
+		t.Errorf("second row team = %v, want beta", receivedBody.Rows[1].JSON["team"])
+	}
+}
+
 func TestWriteEmpty(t *testing.T) {
 	writer := NewWriter("proj", "ds", "tbl")
 	err := writer.Write(context.Background(), nil)
@@ -122,6 +168,11 @@ func TestWriteInsertErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for insert errors")
 	}
+
+	// Verify error message contains details (no longer just goes to log)
+	if !strings.Contains(err.Error(), "invalid") || !strings.Contains(err.Error(), "bad row") {
+		t.Errorf("error should contain details, got: %v", err)
+	}
 }
 
 func TestSnapshotToRow(t *testing.T) {
@@ -147,16 +198,38 @@ func TestSnapshotToRow(t *testing.T) {
 
 	row := snapshotToRow(s)
 
-	if row["project_id"] != "proj" {
-		t.Errorf("project_id = %v, want proj", row["project_id"])
+	// Verify all 16 fields
+	expectations := map[string]any{
+		"timestamp":         "2025-01-15T12:00:00Z",
+		"project_id":        "proj",
+		"region":            "us-central1",
+		"cluster_name":      "cluster",
+		"namespace":         "ns",
+		"team":              "team1",
+		"workload":          "wl1",
+		"subtype":           "sub1",
+		"pod_count":         5,
+		"cpu_request_vcpu":  2.5,
+		"memory_request_gb": 8.0,
+		"cpu_cost":          0.175,
+		"memory_cost":       0.032,
+		"total_cost":        0.207,
+		"is_spot":           true,
+		"interval_seconds":  int64(300),
 	}
-	if row["is_spot"] != true {
-		t.Errorf("is_spot = %v, want true", row["is_spot"])
+
+	if len(row) != len(expectations) {
+		t.Errorf("expected %d fields, got %d", len(expectations), len(row))
 	}
-	if row["pod_count"] != 5 {
-		t.Errorf("pod_count = %v, want 5", row["pod_count"])
-	}
-	if row["timestamp"] != "2025-01-15T12:00:00Z" {
-		t.Errorf("timestamp = %v, want 2025-01-15T12:00:00Z", row["timestamp"])
+
+	for key, want := range expectations {
+		got, ok := row[key]
+		if !ok {
+			t.Errorf("missing field: %s", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("field %s = %v (%T), want %v (%T)", key, got, got, want, want)
+		}
 	}
 }
