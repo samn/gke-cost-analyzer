@@ -9,11 +9,12 @@ import (
 )
 
 var (
-	teamLabel     string
-	workloadLabel string
-	subtypeLabel  string
-	namespace     string
-	region        string
+	teamLabel         string
+	workloadLabel     string
+	subtypeLabel      string
+	namespace         string
+	region            string
+	excludeNamespaces []string
 )
 
 // newDetector is overridable for testing.
@@ -38,6 +39,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&subtypeLabel, "subtype-label", "", "Pod label to use for subtype grouping (optional)")
 	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", "", "Kubernetes namespace to filter (empty = all)")
 	rootCmd.PersistentFlags().StringVar(&region, "region", "", "GCP region for pricing (auto-detected from environment)")
+	rootCmd.PersistentFlags().StringSliceVar(&excludeNamespaces, "exclude-namespaces", []string{"kube-system", "gmp-system"}, "Namespaces to exclude from pod listing (comma-separated)")
 }
 
 // applyDefaults fills in missing flag values from environment detection.

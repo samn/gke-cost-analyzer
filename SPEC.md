@@ -58,7 +58,11 @@ Print version, git commit, and build date.
 ### Global flags
 `--team-label` (default `team`), `--workload-label` (default `app`),
 `--subtype-label` (default empty / disabled), `--namespace` (default all),
-`--region` (auto-detected from GCE metadata or kubeconfig).
+`--region` (auto-detected from GCE metadata or kubeconfig),
+`--exclude-namespaces` (default `kube-system,gmp-system`) — comma-separated
+list of namespaces to exclude from pod listing. When `--namespace` targets a
+specific namespace the exclusion list is effectively a no-op. Set to an empty
+string to include all namespaces.
 
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
@@ -115,6 +119,12 @@ supported via `--namespace`.
 included. Standard GKE nodes use `gke-` and are filtered out. Unscheduled pods
 (empty `NodeName`) are also excluded.
 
+**Namespace exclusion**: Pods in namespaces listed in `--exclude-namespaces`
+(default `kube-system,gmp-system`) are filtered out post-fetch. This removes
+GKE platform overhead pods (DaemonSets like fluentbit, pdcsi-node, gke-metrics,
+GMP collectors) that cannot be user-labeled and would inflate the "unlabeled"
+bucket. The exclusion uses an O(1) set lookup built once per `ListPods` call.
+
 **Resource extraction**: CPU and memory **requests** are summed across all
 containers in the pod (init containers are not included — Autopilot billing
 is based on regular container requests). Resources are stored in both raw
@@ -141,6 +151,8 @@ started), it is stored as zero time.
 - **Nil StartTime**: Stored as zero time; cost calculator treats this as 0
   duration → $0 cost.
 - **Non-Autopilot pods**: Filtered out by `gk3-` node name check.
+- **Excluded namespaces**: Pods in excluded namespaces are dropped post-fetch.
+  Empty exclusion list disables the filter.
 - **Kubernetes API errors**: Propagated to the caller.
 
 ### 3. Cost Calculation (`internal/cost`)

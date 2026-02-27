@@ -29,8 +29,9 @@ type PodInfo struct {
 
 // PodLister lists pods from a Kubernetes cluster.
 type PodLister struct {
-	client    kubernetes.Interface
-	namespace string
+	client            kubernetes.Interface
+	namespace         string
+	excludeNamespaces map[string]bool
 }
 
 // PodListerOption configures a PodLister.
@@ -44,6 +45,18 @@ func WithNamespace(ns string) PodListerOption {
 // WithClient sets a custom kubernetes client (for testing).
 func WithClient(c kubernetes.Interface) PodListerOption {
 	return func(pl *PodLister) { pl.client = c }
+}
+
+// WithExcludeNamespaces sets namespaces to exclude from pod listing.
+func WithExcludeNamespaces(ns []string) PodListerOption {
+	return func(pl *PodLister) {
+		pl.excludeNamespaces = make(map[string]bool, len(ns))
+		for _, n := range ns {
+			if n != "" {
+				pl.excludeNamespaces[n] = true
+			}
+		}
+	}
 }
 
 // NewPodLister creates a PodLister using the default kubeconfig.
@@ -93,6 +106,9 @@ func (pl *PodLister) ListPods(ctx context.Context) ([]PodInfo, error) {
 	pods := make([]PodInfo, 0, len(podList.Items))
 	for i := range podList.Items {
 		if !isAutopilotNode(podList.Items[i].Spec.NodeName) {
+			continue
+		}
+		if pl.excludeNamespaces[podList.Items[i].Namespace] {
 			continue
 		}
 		pods = append(pods, extractPodInfo(&podList.Items[i]))

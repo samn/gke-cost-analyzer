@@ -60,5 +60,8 @@ func newPodLister() (*kube.PodLister, error) {
 	if namespace != "" {
 		opts = append(opts, kube.WithNamespace(namespace))
 	}
+	if len(excludeNamespaces) > 0 {
+		opts = append(opts, kube.WithExcludeNamespaces(excludeNamespaces))
+	}
 	return kube.NewPodLister(opts...)
 }

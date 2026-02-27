@@ -548,6 +548,131 @@ func TestIsSpotPodBothSelectors(t *testing.T) {
 	}
 }
 
+func TestListPodsExcludeNamespaces(t *testing.T) {
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+
+	makePod := func(name, ns string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1.PodSpec{
+				NodeName: "gk3-cluster-pool-abc123",
+				Containers: []corev1.Container{{
+					Name: "c",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU: resource.MustParse("100m"),
+						},
+					},
+				}},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+		}
+	}
+
+	pods := []runtime.Object{
+		makePod("app-pod", "default"),
+		makePod("fluentbit", "kube-system"),
+		makePod("gmp-collector", "gmp-system"),
+		makePod("other-pod", "production"),
+	}
+
+	t.Run("default excludes kube-system and gmp-system", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(
+			WithClient(client),
+			WithExcludeNamespaces([]string{"kube-system", "gmp-system"}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(result) != 2 {
+			t.Fatalf("expected 2 pods, got %d", len(result))
+		}
+		names := map[string]bool{}
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["app-pod"] {
+			t.Error("expected app-pod to be included")
+		}
+		if !names["other-pod"] {
+			t.Error("expected other-pod to be included")
+		}
+		if names["fluentbit"] {
+			t.Error("expected fluentbit (kube-system) to be excluded")
+		}
+		if names["gmp-collector"] {
+			t.Error("expected gmp-collector (gmp-system) to be excluded")
+		}
+	})
+
+	t.Run("empty exclude list includes all namespaces", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(
+			WithClient(client),
+			WithExcludeNamespaces([]string{}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(result) != 4 {
+			t.Fatalf("expected 4 pods with empty exclusion, got %d", len(result))
+		}
+	})
+
+	t.Run("no exclude option includes all namespaces", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(result) != 4 {
+			t.Fatalf("expected 4 pods without exclusion option, got %d", len(result))
+		}
+	})
+
+	t.Run("custom exclude list", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(
+			WithClient(client),
+			WithExcludeNamespaces([]string{"kube-system", "gmp-system", "production"}),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(result) != 1 {
+			t.Fatalf("expected 1 pod, got %d", len(result))
+		}
+		if result[0].Name != "app-pod" {
+			t.Errorf("expected app-pod, got %s", result[0].Name)
+		}
+	})
+}
+
 func TestExtractPodInfoPartialRequests(t *testing.T) {
 	// Pod where only one container has CPU requests and another only has memory.
 	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
