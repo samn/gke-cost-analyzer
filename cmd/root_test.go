@@ -70,14 +70,14 @@ func TestLabelConfigDefaults(t *testing.T) {
 
 func TestNewPromClientExplicitURL(t *testing.T) {
 	savedURL := prometheusURL
-	savedProject := bqProject
+	savedProject := project
 	defer func() {
 		prometheusURL = savedURL
-		bqProject = savedProject
+		project = savedProject
 	}()
 
 	prometheusURL = "http://my-prom:9090"
-	bqProject = ""
+	project = ""
 
 	client, err := newPromClient(context.Background())
 	if err != nil {
@@ -90,14 +90,14 @@ func TestNewPromClientExplicitURL(t *testing.T) {
 
 func TestNewPromClientNoProjectNoURL(t *testing.T) {
 	savedURL := prometheusURL
-	savedProject := bqProject
+	savedProject := project
 	defer func() {
 		prometheusURL = savedURL
-		bqProject = savedProject
+		project = savedProject
 	}()
 
 	prometheusURL = ""
-	bqProject = ""
+	project = ""
 
 	client, err := newPromClient(context.Background())
 	if err != nil {
@@ -110,16 +110,16 @@ func TestNewPromClientNoProjectNoURL(t *testing.T) {
 
 func TestNewPromClientGMPDefault(t *testing.T) {
 	savedURL := prometheusURL
-	savedProject := bqProject
+	savedProject := project
 	savedFn := gcpHTTPClientFn
 	defer func() {
 		prometheusURL = savedURL
-		bqProject = savedProject
+		project = savedProject
 		gcpHTTPClientFn = savedFn
 	}()
 
 	prometheusURL = ""
-	bqProject = "my-gcp-project"
+	project = "my-gcp-project"
 
 	// Mock GCP HTTP client to avoid needing real credentials
 	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
@@ -137,16 +137,16 @@ func TestNewPromClientGMPDefault(t *testing.T) {
 
 func TestNewPromClientCustomURLTakesPriority(t *testing.T) {
 	savedURL := prometheusURL
-	savedProject := bqProject
+	savedProject := project
 	savedFn := gcpHTTPClientFn
 	defer func() {
 		prometheusURL = savedURL
-		bqProject = savedProject
+		project = savedProject
 		gcpHTTPClientFn = savedFn
 	}()
 
 	prometheusURL = "http://custom-prom:9090"
-	bqProject = "my-gcp-project"
+	project = "my-gcp-project"
 
 	// GCP client should NOT be called when custom URL is set
 	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {

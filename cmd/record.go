@@ -18,7 +18,6 @@ import (
 
 var (
 	recordInterval time.Duration
-	bqProject      string
 	bqDataset      string
 	bqTable        string
 	clusterName    string
@@ -28,7 +27,6 @@ var (
 
 func init() {
 	recordCmd.Flags().DurationVar(&recordInterval, "interval", 5*time.Minute, "Snapshot interval")
-	recordCmd.Flags().StringVar(&bqProject, "project", "", "GCP project ID for BigQuery (auto-detected from environment)")
 	recordCmd.Flags().StringVar(&bqDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
 	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (auto-detected from environment)")
@@ -48,7 +46,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	if region == "" {
 		return fmt.Errorf("--region is required")
 	}
-	if bqProject == "" {
+	if project == "" {
 		return fmt.Errorf("--project is required")
 	}
 	if clusterName == "" {
@@ -95,17 +93,17 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("creating authenticated client: %w", err)
 		}
-		writer = bigquery.NewWriter(bqProject, bqDataset, bqTable,
+		writer = bigquery.NewWriter(project, bqDataset, bqTable,
 			bigquery.WithWriterHTTPClient(httpClient))
 		fmt.Printf("Recording costs every %s to %s.%s.%s\n",
-			recordInterval, bqProject, bqDataset, bqTable)
+			recordInterval, project, bqDataset, bqTable)
 	}
 
 	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
 	intervalSecs := int64(recordInterval.Seconds())
 	sc := snapshotConfig{
-		projectID:   bqProject,
+		projectID:   project,
 		region:      region,
 		clusterName: clusterName,
 	}

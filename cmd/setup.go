@@ -8,14 +8,12 @@ import (
 )
 
 var (
-	setupProject  string
 	setupDataset  string
 	setupTable    string
 	setupLocation string
 )
 
 func init() {
-	setupCmd.Flags().StringVar(&setupProject, "project", "", "GCP project ID (auto-detected from environment)")
 	setupCmd.Flags().StringVar(&setupDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	setupCmd.Flags().StringVar(&setupTable, "table", "cost_snapshots", "BigQuery table name")
 	setupCmd.Flags().StringVar(&setupLocation, "location", "US", "BigQuery dataset location")
@@ -30,7 +28,7 @@ var setupCmd = &cobra.Command{
 }
 
 func runSetup(cmd *cobra.Command, _ []string) error {
-	if setupProject == "" {
+	if project == "" {
 		return fmt.Errorf("--project is required")
 	}
 
@@ -41,22 +39,22 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating authenticated client: %w", err)
 	}
 
-	sc := bigquery.NewSetupClient(setupProject,
+	sc := bigquery.NewSetupClient(project,
 		bigquery.WithSetupHTTPClient(httpClient))
 
-	fmt.Printf("Creating dataset %s.%s (location: %s)...\n", setupProject, setupDataset, setupLocation)
+	fmt.Printf("Creating dataset %s.%s (location: %s)...\n", project, setupDataset, setupLocation)
 	if err := sc.EnsureDataset(ctx, setupDataset, setupLocation); err != nil {
 		return fmt.Errorf("creating dataset: %w", err)
 	}
 	fmt.Println("Dataset ready.")
 
-	fmt.Printf("Creating table %s.%s.%s...\n", setupProject, setupDataset, setupTable)
+	fmt.Printf("Creating table %s.%s.%s...\n", project, setupDataset, setupTable)
 	if err := sc.EnsureTable(ctx, setupDataset, setupTable); err != nil {
 		return fmt.Errorf("creating table: %w", err)
 	}
 	fmt.Println("Table ready.")
 
 	fmt.Println("\nSetup complete! You can now run:")
-	fmt.Printf("  autopilot-cost-analyzer record --project %s --region <REGION> --cluster-name <CLUSTER>\n", setupProject)
+	fmt.Printf("  autopilot-cost-analyzer record --project %s --region <REGION> --cluster-name <CLUSTER>\n", project)
 	return nil
 }

@@ -35,7 +35,7 @@ func testModel(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
-	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil)
+	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil, "")
 }
 
 func TestModelInitialView(t *testing.T) {
@@ -288,7 +288,7 @@ func testModelWithSubtype(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app", SubtypeLabel: "subtype"}
-	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil)
+	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil, "")
 }
 
 func TestModelHelpTextWithSubtype(t *testing.T) {
@@ -370,6 +370,10 @@ func TestModelSortIndicatorInView(t *testing.T) {
 // testModelWithPrometheus creates a model with a real Prometheus client
 // pointing at the given test server URL.
 func testModelWithPrometheus(lister PodLister, promURL string) Model {
+	return testModelWithPrometheusProject(lister, promURL, "test-project")
+}
+
+func testModelWithPrometheusProject(lister PodLister, promURL string, promProject string) Model {
 	ctx, cancel := context.WithCancel(context.Background())
 	pt := pricing.FromPrices([]pricing.Price{
 		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
@@ -378,7 +382,7 @@ func testModelWithPrometheus(lister PodLister, promURL string) Model {
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	client := prometheus.NewClient(promURL)
-	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, client)
+	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, client, promProject)
 }
 
 func TestModelShowUtilizationWhenPromClientSet(t *testing.T) {
@@ -399,8 +403,8 @@ func TestModelViewShowsPrometheusError(t *testing.T) {
 	m.promErr = fmt.Errorf("connection refused")
 
 	view := m.View()
-	if !strings.Contains(view, "prometheus error: connection refused") {
-		t.Errorf("expected prometheus error in view, got:\n%s", view)
+	if !strings.Contains(view, "prometheus test-project error: connection refused") {
+		t.Errorf("expected prometheus error with project in view, got:\n%s", view)
 	}
 }
 
@@ -415,8 +419,8 @@ func TestModelViewShowsNoUtilizationData(t *testing.T) {
 	m.utilPodCount = 0
 
 	view := m.View()
-	if !strings.Contains(view, "prometheus: no utilization data") {
-		t.Errorf("expected 'no utilization data' in view, got:\n%s", view)
+	if !strings.Contains(view, "prometheus test-project: no utilization data") {
+		t.Errorf("expected 'no utilization data' with project in view, got:\n%s", view)
 	}
 }
 
@@ -431,8 +435,25 @@ func TestModelViewShowsUtilizationCount(t *testing.T) {
 	m.utilPodCount = 5
 
 	view := m.View()
-	if !strings.Contains(view, "utilization: 5 pods") {
-		t.Errorf("expected 'utilization: 5 pods' in view, got:\n%s", view)
+	if !strings.Contains(view, "utilization test-project: 5 pods") {
+		t.Errorf("expected 'utilization: 5 pods' with project in view, got:\n%s", view)
+	}
+}
+
+func TestModelViewShowsNoProjectWhenEmpty(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModelWithPrometheusProject(lister, "http://unused", "")
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+	}
+	m.promErr = nil
+	m.utilPodCount = 0
+
+	view := m.View()
+	// Without a project, should show "prometheus:" without a project name
+	if !strings.Contains(view, "(prometheus: no utilization data)") {
+		t.Errorf("expected '(prometheus: no utilization data)' without project tag, got:\n%s", view)
 	}
 }
 

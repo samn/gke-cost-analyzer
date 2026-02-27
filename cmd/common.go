@@ -94,16 +94,16 @@ func newPromClient(ctx context.Context) (*prometheus.Client, error) {
 	}
 
 	// Auto-default to GMP when project ID is available.
-	if bqProject == "" {
+	if project == "" {
 		return nil, nil
 	}
 
-	gmpURL := prometheus.GMPBaseURL(bqProject)
+	gmpURL := prometheus.GMPBaseURL(project)
 	httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/monitoring.read")
 	if err != nil {
 		return nil, fmt.Errorf("creating monitoring credentials: %w", err)
 	}
 
-	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", bqProject)
+	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", project)
 	return prometheus.NewClient(gmpURL, prometheus.WithHTTPClient(httpClient)), nil
 }

@@ -254,17 +254,17 @@ func TestRecordSnapshotListError(t *testing.T) {
 
 func TestRecordRequiresRegion(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = ""
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
@@ -279,17 +279,17 @@ func TestRecordRequiresRegion(t *testing.T) {
 
 func TestRecordRequiresProject(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = ""
+	project = ""
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
@@ -304,17 +304,17 @@ func TestRecordRequiresProject(t *testing.T) {
 
 func TestRecordRequiresClusterName(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = ""
 	recordInterval = 5 * time.Minute
 
@@ -451,17 +451,17 @@ func TestRecordSnapshotWriteError(t *testing.T) {
 
 func TestRecordRejectsNegativeInterval(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = -5 * time.Minute
 
@@ -476,17 +476,17 @@ func TestRecordRejectsNegativeInterval(t *testing.T) {
 
 func TestRecordRejectsZeroInterval(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 0
 
@@ -501,21 +501,21 @@ func TestRecordRejectsZeroInterval(t *testing.T) {
 
 func TestRecordOutputFileRequiresDryRun(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	savedDryRun := dryRun
 	savedOutputFile := outputFile
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 		dryRun = savedDryRun
 		outputFile = savedOutputFile
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 	dryRun = false

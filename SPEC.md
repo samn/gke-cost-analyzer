@@ -37,8 +37,8 @@ Real-time terminal display of workload costs. Fetches pod data on an interval
 interactive table via BubbleTea. Supports interactive column sorting with number
 keys.
 
-Flags: `--interval`, `--region` (required), `--namespace`, `--team-label`,
-`--workload-label`, `--subtype-label`, `--prometheus-url` (optional).
+Flags: `--interval`, `--region` (required), `--project` (global), `--namespace`,
+`--team-label`, `--workload-label`, `--subtype-label`, `--prometheus-url` (optional).
 
 Utilization columns (CPU%, MEM%, WASTE) are automatically displayed when a
 Prometheus source is available — either GCP Managed Prometheus (default when
@@ -49,7 +49,7 @@ fetched on each refresh cycle.
 Daemon mode: periodically snapshot pod costs and write aggregated records to
 BigQuery. Runs once immediately on startup, then on a ticker.
 
-Flags: `--interval` (default 5m), `--region` (required), `--project` (required),
+Flags: `--interval` (default 5m), `--region` (required), `--project` (required, global),
 `--cluster-name` (required), `--dataset`, `--table`, `--namespace`,
 `--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally),
 `--prometheus-url` (optional).
@@ -74,6 +74,8 @@ Print version, git commit, and build date.
 list of namespaces to exclude from pod listing. When `--namespace` targets a
 specific namespace the exclusion list is effectively a no-op. Set to an empty
 string to include all namespaces.
+`--project` (GCP project ID; auto-detected from GCE metadata or kubeconfig;
+used by `record`/`setup` for BigQuery and by all commands for GMP Prometheus).
 `--prometheus-url` (override Prometheus API base URL; defaults to GCP Managed
 Prometheus when a project ID is available).
 

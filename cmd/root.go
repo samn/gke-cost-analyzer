@@ -14,6 +14,7 @@ var (
 	subtypeLabel      string
 	namespace         string
 	region            string
+	project           string
 	excludeNamespaces []string
 	prometheusURL     string
 )
@@ -42,6 +43,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&region, "region", "", "GCP region for pricing (auto-detected from environment)")
 	rootCmd.PersistentFlags().StringSliceVar(&excludeNamespaces, "exclude-namespaces", []string{"kube-system", "gmp-system"}, "Namespaces to exclude from pod listing (comma-separated)")
 	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)")
+	rootCmd.PersistentFlags().StringVar(&project, "project", "", "GCP project ID (auto-detected from environment)")
 }
 
 // applyDefaults fills in missing flag values from environment detection.
@@ -55,12 +57,9 @@ func applyDefaults(d *envdefaults.Detector, cmd *cobra.Command) {
 		region = defaults.Region
 		applied = append(applied, fmt.Sprintf("region=%s", defaults.Region))
 	}
-	if bqProject == "" && defaults.ProjectID != "" {
-		bqProject = defaults.ProjectID
+	if project == "" && defaults.ProjectID != "" {
+		project = defaults.ProjectID
 		applied = append(applied, fmt.Sprintf("project=%s", defaults.ProjectID))
-	}
-	if setupProject == "" && defaults.ProjectID != "" {
-		setupProject = defaults.ProjectID
 	}
 	if clusterName == "" && defaults.ClusterName != "" {
 		clusterName = defaults.ClusterName

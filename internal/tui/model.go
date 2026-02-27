@@ -44,8 +44,9 @@ type Model struct {
 	showUtilization bool
 
 	// Prometheus status (displayed in header when utilization is enabled).
-	promErr      error // last Prometheus fetch error (nil = OK)
-	utilPodCount int   // number of pods with utilization data
+	promErr      error  // last Prometheus fetch error (nil = OK)
+	utilPodCount int    // number of pods with utilization data
+	promProject  string // GCP project queried for Prometheus metrics
 
 	lister     PodLister
 	calc       *cost.Calculator
@@ -57,7 +58,7 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, calc *cost.Calculator, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client) Model {
+func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, calc *cost.Calculator, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string) Model {
 	return Model{
 		lister:          lister,
 		calc:            calc,
@@ -69,6 +70,7 @@ func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, 
 		showSubtype:     lc.SubtypeLabel != "",
 		showUtilization: promClient != nil,
 		promClient:      promClient,
+		promProject:     promProject,
 	}
 }
 
@@ -131,13 +133,17 @@ func (m Model) View() string {
 	}
 
 	if m.showUtilization {
+		projectTag := ""
+		if m.promProject != "" {
+			projectTag = " " + m.promProject
+		}
 		switch {
 		case m.promErr != nil:
-			header += fmt.Sprintf("  (prometheus error: %v)", m.promErr)
+			header += fmt.Sprintf("  (prometheus%s error: %v)", projectTag, m.promErr)
 		case m.utilPodCount == 0:
-			header += "  (prometheus: no utilization data)"
+			header += fmt.Sprintf("  (prometheus%s: no utilization data)", projectTag)
 		default:
-			header += fmt.Sprintf("  (utilization: %d pods)", m.utilPodCount)
+			header += fmt.Sprintf("  (utilization%s: %d pods)", projectTag, m.utilPodCount)
 		}
 	}
 
