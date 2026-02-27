@@ -1,6 +1,10 @@
 package cmd
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"testing"
+)
 
 func TestExecute(t *testing.T) {
 	// Verify the root command can be executed without error
@@ -61,5 +65,100 @@ func TestLabelConfigDefaults(t *testing.T) {
 	}
 	if lc.SubtypeLabel != "" {
 		t.Errorf("subtype label = %s, want empty", lc.SubtypeLabel)
+	}
+}
+
+func TestNewPromClientExplicitURL(t *testing.T) {
+	savedURL := prometheusURL
+	savedProject := project
+	defer func() {
+		prometheusURL = savedURL
+		project = savedProject
+	}()
+
+	prometheusURL = "http://my-prom:9090"
+	project = ""
+
+	client, err := newPromClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when URL is set")
+	}
+}
+
+func TestNewPromClientNoProjectNoURL(t *testing.T) {
+	savedURL := prometheusURL
+	savedProject := project
+	defer func() {
+		prometheusURL = savedURL
+		project = savedProject
+	}()
+
+	prometheusURL = ""
+	project = ""
+
+	client, err := newPromClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client != nil {
+		t.Error("expected nil client when no project and no URL")
+	}
+}
+
+func TestNewPromClientGMPDefault(t *testing.T) {
+	savedURL := prometheusURL
+	savedProject := project
+	savedFn := gcpHTTPClientFn
+	defer func() {
+		prometheusURL = savedURL
+		project = savedProject
+		gcpHTTPClientFn = savedFn
+	}()
+
+	prometheusURL = ""
+	project = "my-gcp-project"
+
+	// Mock GCP HTTP client to avoid needing real credentials
+	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
+		return &http.Client{}, nil
+	}
+
+	client, err := newPromClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when project is available (GMP default)")
+	}
+}
+
+func TestNewPromClientCustomURLTakesPriority(t *testing.T) {
+	savedURL := prometheusURL
+	savedProject := project
+	savedFn := gcpHTTPClientFn
+	defer func() {
+		prometheusURL = savedURL
+		project = savedProject
+		gcpHTTPClientFn = savedFn
+	}()
+
+	prometheusURL = "http://custom-prom:9090"
+	project = "my-gcp-project"
+
+	// GCP client should NOT be called when custom URL is set
+	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
+		t.Fatal("gcpHTTPClientFn should not be called when custom URL is set")
+		return nil, nil
+	}
+
+	client, err := newPromClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when custom URL is set")
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"time"
@@ -13,14 +12,12 @@ import (
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	pqwriter "github.com/samn/autopilot-cost-analyzer/internal/parquet"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
 var (
 	recordInterval time.Duration
-	bqProject      string
 	bqDataset      string
 	bqTable        string
 	clusterName    string
@@ -30,7 +27,6 @@ var (
 
 func init() {
 	recordCmd.Flags().DurationVar(&recordInterval, "interval", 5*time.Minute, "Snapshot interval")
-	recordCmd.Flags().StringVar(&bqProject, "project", "", "GCP project ID for BigQuery (auto-detected from environment)")
 	recordCmd.Flags().StringVar(&bqDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
 	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (auto-detected from environment)")
@@ -50,7 +46,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	if region == "" {
 		return fmt.Errorf("--region is required")
 	}
-	if bqProject == "" {
+	if project == "" {
 		return fmt.Errorf("--project is required")
 	}
 	if clusterName == "" {
@@ -79,6 +75,11 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
+	promClient, err := newPromClient(ctx)
+	if err != nil {
+		return err
+	}
+
 	var writer *bigquery.Writer
 	if dryRun {
 		if outputFile != "" {
@@ -88,21 +89,21 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		}
 	} else {
 		// Create authenticated HTTP client for BigQuery
-		httpClient, err := authHTTPClient(ctx)
+		httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/bigquery")
 		if err != nil {
 			return fmt.Errorf("creating authenticated client: %w", err)
 		}
-		writer = bigquery.NewWriter(bqProject, bqDataset, bqTable,
+		writer = bigquery.NewWriter(project, bqDataset, bqTable,
 			bigquery.WithWriterHTTPClient(httpClient))
 		fmt.Printf("Recording costs every %s to %s.%s.%s\n",
-			recordInterval, bqProject, bqDataset, bqTable)
+			recordInterval, project, bqDataset, bqTable)
 	}
 
 	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
 	intervalSecs := int64(recordInterval.Seconds())
 	sc := snapshotConfig{
-		projectID:   bqProject,
+		projectID:   project,
 		region:      region,
 		clusterName: clusterName,
 	}
@@ -111,7 +112,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	defer ticker.Stop()
 
 	// Run once immediately
-	if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
+	if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
@@ -121,7 +122,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
+			if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
 			}
 		}
@@ -135,7 +136,7 @@ type snapshotConfig struct {
 	clusterName string
 }
 
-func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
+func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
 	// Capture timestamp before listing pods so it reflects the start of the
 	// snapshot window, not the end of processing.
 	now := time.Now()
@@ -145,8 +146,18 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 		return fmt.Errorf("listing pods: %w", err)
 	}
 
+	// Fetch utilization data from Prometheus if configured.
+	var usage map[prometheus.PodKey]prometheus.PodUsage
+	if promClient != nil {
+		usage, err = promClient.FetchUsage(ctx)
+		if err != nil {
+			// Log warning but continue without utilization data.
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch utilization metrics: %v\n", err)
+		}
+	}
+
 	costs := calc.CalculateAll(pods)
-	aggs := cost.Aggregate(costs, lc)
+	aggs := cost.AggregateWithUtilization(costs, lc, usage)
 
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
@@ -184,7 +195,7 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 }
 
 func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {
-	return bigquery.CostSnapshot{
+	snap := bigquery.CostSnapshot{
 		Timestamp:       ts,
 		ProjectID:       sc.projectID,
 		Region:          sc.region,
@@ -202,12 +213,11 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		IsSpot:          a.Key.IsSpot,
 		IntervalSeconds: intervalSecs,
 	}
-}
-
-func authHTTPClient(ctx context.Context) (*http.Client, error) {
-	ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/bigquery")
-	if err != nil {
-		return nil, fmt.Errorf("getting default credentials: %w", err)
+	if a.HasUtilization {
+		snap.CPUUtilization = &a.CPUUtilization
+		snap.MemoryUtilization = &a.MemUtilization
+		snap.EfficiencyScore = &a.EfficiencyScore
+		snap.WastedCostPerHour = &a.WastedCostPerHour
 	}
-	return oauth2.NewClient(ctx, ts), nil
+	return snap
 }

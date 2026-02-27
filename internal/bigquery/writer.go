@@ -132,7 +132,7 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 }
 
 func snapshotToRow(s CostSnapshot) map[string]any {
-	return map[string]any{
+	row := map[string]any{
 		"timestamp":         s.Timestamp.Format(time.RFC3339),
 		"project_id":        s.ProjectID,
 		"region":            s.Region,
@@ -150,4 +150,17 @@ func snapshotToRow(s CostSnapshot) map[string]any {
 		"is_spot":           s.IsSpot,
 		"interval_seconds":  s.IntervalSeconds,
 	}
+	if s.CPUUtilization != nil {
+		row["cpu_utilization"] = *s.CPUUtilization
+	}
+	if s.MemoryUtilization != nil {
+		row["memory_utilization"] = *s.MemoryUtilization
+	}
+	if s.EfficiencyScore != nil {
+		row["efficiency_score"] = *s.EfficiencyScore
+	}
+	if s.WastedCostPerHour != nil {
+		row["wasted_cost_per_hour"] = *s.WastedCostPerHour
+	}
+	return row
 }

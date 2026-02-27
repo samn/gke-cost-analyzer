@@ -18,6 +18,8 @@ const (
 	SortByMem
 	SortByCostPerHour
 	SortByCost
+	SortByCPUUtil
+	SortByWaste
 )
 
 // SortConfig holds the current sort column and direction.
@@ -72,6 +74,10 @@ func compareByColumn(a, b cost.AggregatedCost, col SortColumn) int {
 		return compareFloat(a.CostPerHour, b.CostPerHour)
 	case SortByCost:
 		return compareFloat(a.TotalCost, b.TotalCost)
+	case SortByCPUUtil:
+		return compareFloat(a.CPUUtilization, b.CPUUtilization)
+	case SortByWaste:
+		return compareFloat(a.WastedCostPerHour, b.WastedCostPerHour)
 	default:
 		return 0
 	}
@@ -109,43 +115,23 @@ func compareFloat(a, b float64) int {
 
 // ColumnForKey maps a number key press to a sort column.
 // Returns the column and true if the key is valid, or false otherwise.
-func ColumnForKey(key rune, showSubtype bool) (SortColumn, bool) {
+func ColumnForKey(key rune, showSubtype, showUtilization bool) (SortColumn, bool) {
+	cols := []SortColumn{SortByTeam, SortByWorkload}
 	if showSubtype {
-		switch key {
-		case '1':
-			return SortByTeam, true
-		case '2':
-			return SortByWorkload, true
-		case '3':
-			return SortBySubtype, true
-		case '4':
-			return SortByPods, true
-		case '5':
-			return SortByCPU, true
-		case '6':
-			return SortByMem, true
-		case '7':
-			return SortByCostPerHour, true
-		case '8':
-			return SortByCost, true
-		}
-	} else {
-		switch key {
-		case '1':
-			return SortByTeam, true
-		case '2':
-			return SortByWorkload, true
-		case '3':
-			return SortByPods, true
-		case '4':
-			return SortByCPU, true
-		case '5':
-			return SortByMem, true
-		case '6':
-			return SortByCostPerHour, true
-		case '7':
-			return SortByCost, true
-		}
+		cols = append(cols, SortBySubtype)
 	}
-	return 0, false
+	cols = append(cols, SortByPods, SortByCPU, SortByMem, SortByCostPerHour, SortByCost)
+	if showUtilization {
+		cols = append(cols, SortByCPUUtil, SortByWaste)
+	}
+
+	// Keys '1'-'9' map to indices 0-8, '0' maps to index 9.
+	idx := int(key-'1') % 10
+	if key == '0' {
+		idx = 9
+	}
+	if idx < 0 || idx >= len(cols) {
+		return 0, false
+	}
+	return cols[idx], true
 }

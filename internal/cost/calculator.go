@@ -16,7 +16,9 @@ type PodCost struct {
 	TotalCost     float64
 	DurationHours float64
 	// CostPerHour is the hourly rate (cpu + memory)
-	CostPerHour float64
+	CostPerHour    float64
+	CPUCostPerHour float64
+	MemCostPerHour float64
 }
 
 // Calculator computes costs for pods given a pricing table.
@@ -52,12 +54,14 @@ func (c *Calculator) Calculate(pod kube.PodInfo) PodCost {
 	memPerHour := pod.MemRequestGB * memPrice
 
 	return PodCost{
-		Pod:           pod,
-		CPUCost:       cpuCost,
-		MemCost:       memCost,
-		TotalCost:     cpuCost + memCost,
-		DurationHours: durationHours,
-		CostPerHour:   cpuPerHour + memPerHour,
+		Pod:            pod,
+		CPUCost:        cpuCost,
+		MemCost:        memCost,
+		TotalCost:      cpuCost + memCost,
+		DurationHours:  durationHours,
+		CostPerHour:    cpuPerHour + memPerHour,
+		CPUCostPerHour: cpuPerHour,
+		MemCostPerHour: memPerHour,
 	}
 }
 

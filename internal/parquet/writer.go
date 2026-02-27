@@ -13,65 +13,77 @@ import (
 // Row is the Parquet representation of a cost snapshot, matching the BigQuery
 // table schema column-for-column.
 type Row struct {
-	Timestamp       int64   `parquet:"timestamp,timestamp(microsecond)"`
-	ProjectID       string  `parquet:"project_id"`
-	Region          string  `parquet:"region"`
-	ClusterName     string  `parquet:"cluster_name"`
-	Namespace       string  `parquet:"namespace"`
-	Team            string  `parquet:"team"`
-	Workload        string  `parquet:"workload"`
-	Subtype         string  `parquet:"subtype"`
-	PodCount        int64   `parquet:"pod_count"`
-	CPURequestVCPU  float64 `parquet:"cpu_request_vcpu"`
-	MemoryRequestGB float64 `parquet:"memory_request_gb"`
-	CPUCost         float64 `parquet:"cpu_cost"`
-	MemoryCost      float64 `parquet:"memory_cost"`
-	TotalCost       float64 `parquet:"total_cost"`
-	IsSpot          bool    `parquet:"is_spot"`
-	IntervalSeconds int64   `parquet:"interval_seconds"`
+	Timestamp         int64    `parquet:"timestamp,timestamp(microsecond)"`
+	ProjectID         string   `parquet:"project_id"`
+	Region            string   `parquet:"region"`
+	ClusterName       string   `parquet:"cluster_name"`
+	Namespace         string   `parquet:"namespace"`
+	Team              string   `parquet:"team"`
+	Workload          string   `parquet:"workload"`
+	Subtype           string   `parquet:"subtype"`
+	PodCount          int64    `parquet:"pod_count"`
+	CPURequestVCPU    float64  `parquet:"cpu_request_vcpu"`
+	MemoryRequestGB   float64  `parquet:"memory_request_gb"`
+	CPUCost           float64  `parquet:"cpu_cost"`
+	MemoryCost        float64  `parquet:"memory_cost"`
+	TotalCost         float64  `parquet:"total_cost"`
+	IsSpot            bool     `parquet:"is_spot"`
+	IntervalSeconds   int64    `parquet:"interval_seconds"`
+	CPUUtilization    *float64 `parquet:"cpu_utilization,optional"`
+	MemoryUtilization *float64 `parquet:"memory_utilization,optional"`
+	EfficiencyScore   *float64 `parquet:"efficiency_score,optional"`
+	WastedCostPerHour *float64 `parquet:"wasted_cost_per_hour,optional"`
 }
 
 // SnapshotToRow converts a BigQuery CostSnapshot to a Parquet Row.
 func SnapshotToRow(s bigquery.CostSnapshot) Row {
 	return Row{
-		Timestamp:       s.Timestamp.UnixMicro(),
-		ProjectID:       s.ProjectID,
-		Region:          s.Region,
-		ClusterName:     s.ClusterName,
-		Namespace:       s.Namespace,
-		Team:            s.Team,
-		Workload:        s.Workload,
-		Subtype:         s.Subtype,
-		PodCount:        int64(s.PodCount),
-		CPURequestVCPU:  s.CPURequestVCPU,
-		MemoryRequestGB: s.MemoryRequestGB,
-		CPUCost:         s.CPUCost,
-		MemoryCost:      s.MemoryCost,
-		TotalCost:       s.TotalCost,
-		IsSpot:          s.IsSpot,
-		IntervalSeconds: s.IntervalSeconds,
+		Timestamp:         s.Timestamp.UnixMicro(),
+		ProjectID:         s.ProjectID,
+		Region:            s.Region,
+		ClusterName:       s.ClusterName,
+		Namespace:         s.Namespace,
+		Team:              s.Team,
+		Workload:          s.Workload,
+		Subtype:           s.Subtype,
+		PodCount:          int64(s.PodCount),
+		CPURequestVCPU:    s.CPURequestVCPU,
+		MemoryRequestGB:   s.MemoryRequestGB,
+		CPUCost:           s.CPUCost,
+		MemoryCost:        s.MemoryCost,
+		TotalCost:         s.TotalCost,
+		IsSpot:            s.IsSpot,
+		IntervalSeconds:   s.IntervalSeconds,
+		CPUUtilization:    s.CPUUtilization,
+		MemoryUtilization: s.MemoryUtilization,
+		EfficiencyScore:   s.EfficiencyScore,
+		WastedCostPerHour: s.WastedCostPerHour,
 	}
 }
 
 // RowToSnapshot converts a Parquet Row back to a BigQuery CostSnapshot.
 func RowToSnapshot(r Row) bigquery.CostSnapshot {
 	return bigquery.CostSnapshot{
-		Timestamp:       time.UnixMicro(r.Timestamp),
-		ProjectID:       r.ProjectID,
-		Region:          r.Region,
-		ClusterName:     r.ClusterName,
-		Namespace:       r.Namespace,
-		Team:            r.Team,
-		Workload:        r.Workload,
-		Subtype:         r.Subtype,
-		PodCount:        int(r.PodCount),
-		CPURequestVCPU:  r.CPURequestVCPU,
-		MemoryRequestGB: r.MemoryRequestGB,
-		CPUCost:         r.CPUCost,
-		MemoryCost:      r.MemoryCost,
-		TotalCost:       r.TotalCost,
-		IsSpot:          r.IsSpot,
-		IntervalSeconds: r.IntervalSeconds,
+		Timestamp:         time.UnixMicro(r.Timestamp),
+		ProjectID:         r.ProjectID,
+		Region:            r.Region,
+		ClusterName:       r.ClusterName,
+		Namespace:         r.Namespace,
+		Team:              r.Team,
+		Workload:          r.Workload,
+		Subtype:           r.Subtype,
+		PodCount:          int(r.PodCount),
+		CPURequestVCPU:    r.CPURequestVCPU,
+		MemoryRequestGB:   r.MemoryRequestGB,
+		CPUCost:           r.CPUCost,
+		MemoryCost:        r.MemoryCost,
+		TotalCost:         r.TotalCost,
+		IsSpot:            r.IsSpot,
+		IntervalSeconds:   r.IntervalSeconds,
+		CPUUtilization:    r.CPUUtilization,
+		MemoryUtilization: r.MemoryUtilization,
+		EfficiencyScore:   r.EfficiencyScore,
+		WastedCostPerHour: r.WastedCostPerHour,
 	}
 }
 

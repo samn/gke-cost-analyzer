@@ -154,7 +154,7 @@ func TestRecordSnapshot(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, nil, sc, 300, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRecordSnapshotDryRun(t *testing.T) {
 	os.Stdout = w
 
 	// Pass nil writer for dry-run
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, nil, sc, 300, "")
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("closing pipe writer: %v", err)
@@ -243,7 +243,7 @@ func TestRecordSnapshotListError(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl")
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, nil, sc, 300, "")
 	if err == nil {
 		t.Fatal("expected error from list failure")
 	}
@@ -254,17 +254,17 @@ func TestRecordSnapshotListError(t *testing.T) {
 
 func TestRecordRequiresRegion(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = ""
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
@@ -279,17 +279,17 @@ func TestRecordRequiresRegion(t *testing.T) {
 
 func TestRecordRequiresProject(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = ""
+	project = ""
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
@@ -304,17 +304,17 @@ func TestRecordRequiresProject(t *testing.T) {
 
 func TestRecordRequiresClusterName(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = ""
 	recordInterval = 5 * time.Minute
 
@@ -343,7 +343,7 @@ func TestRecordSnapshotEmptyPods(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, nil, sc, 300, "")
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("closing pipe writer: %v", err)
@@ -402,7 +402,7 @@ func TestRecordSnapshotMultipleGroups(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, nil, sc, 300, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestRecordSnapshotWriteError(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, nil, sc, 300, "")
 	if err == nil {
 		t.Fatal("expected error from BigQuery write failure")
 	}
@@ -451,17 +451,17 @@ func TestRecordSnapshotWriteError(t *testing.T) {
 
 func TestRecordRejectsNegativeInterval(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = -5 * time.Minute
 
@@ -476,17 +476,17 @@ func TestRecordRejectsNegativeInterval(t *testing.T) {
 
 func TestRecordRejectsZeroInterval(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 0
 
@@ -501,21 +501,21 @@ func TestRecordRejectsZeroInterval(t *testing.T) {
 
 func TestRecordOutputFileRequiresDryRun(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	savedDryRun := dryRun
 	savedOutputFile := outputFile
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 		dryRun = savedDryRun
 		outputFile = savedOutputFile
 	}()
 	region = "us-central1"
-	bqProject = "proj"
+	project = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 	dryRun = false
@@ -556,7 +556,7 @@ func TestRecordSnapshotParquetOutput(t *testing.T) {
 	pqFile := dir + "/snapshots.parquet"
 
 	// Pass nil writer (dry-run) with parquet file
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, nil, sc, 300, pqFile)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -604,13 +604,13 @@ func TestRecordSnapshotParquetAppends(t *testing.T) {
 	pqFile := dir + "/snapshots.parquet"
 
 	// First snapshot
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, nil, sc, 300, pqFile)
 	if err != nil {
 		t.Fatalf("first snapshot: %v", err)
 	}
 
 	// Second snapshot
-	err = recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	err = recordSnapshot(context.Background(), lister, calc, lc, nil, nil, sc, 300, pqFile)
 	if err != nil {
 		t.Fatalf("second snapshot: %v", err)
 	}

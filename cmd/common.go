@@ -3,11 +3,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // podLister is an interface for listing pods, enabling testing without a real cluster.
@@ -64,4 +68,42 @@ func newPodLister() (*kube.PodLister, error) {
 		opts = append(opts, kube.WithExcludeNamespaces(excludeNamespaces))
 	}
 	return kube.NewPodLister(opts...)
+}
+
+// gcpHTTPClientFn is the function used to create GCP-authenticated HTTP clients.
+// Overridable for testing.
+var gcpHTTPClientFn = defaultGCPHTTPClient
+
+func defaultGCPHTTPClient(ctx context.Context, scopes ...string) (*http.Client, error) {
+	ts, err := google.DefaultTokenSource(ctx, scopes...)
+	if err != nil {
+		return nil, fmt.Errorf("getting default credentials: %w", err)
+	}
+	return oauth2.NewClient(ctx, ts), nil
+}
+
+// newPromClient creates a Prometheus client based on the configuration:
+//   - If --prometheus-url is set, use that URL with a plain HTTP client.
+//   - Otherwise, if a GCP project ID is available, default to Google Cloud
+//     Managed Service for Prometheus (GMP) with OAuth2 authentication.
+//   - If neither, return nil (no utilization metrics).
+func newPromClient(ctx context.Context) (*prometheus.Client, error) {
+	if prometheusURL != "" {
+		fmt.Printf("Fetching utilization metrics from %s\n", prometheusURL)
+		return prometheus.NewClient(prometheusURL), nil
+	}
+
+	// Auto-default to GMP when project ID is available.
+	if project == "" {
+		return nil, nil
+	}
+
+	gmpURL := prometheus.GMPBaseURL(project)
+	httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/monitoring.read")
+	if err != nil {
+		return nil, fmt.Errorf("creating monitoring credentials: %w", err)
+	}
+
+	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", project)
+	return prometheus.NewClient(gmpURL, prometheus.WithHTTPClient(httpClient), prometheus.WithGMPSystemMetrics()), nil
 }

@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `--project` is now a global persistent flag shared by all commands (`watch`, `record`, `setup`) instead of a local flag on `record` and `setup`; the `watch` command can now use `--project` to explicitly set the GCP project for Prometheus/GMP queries
+- GMP utilization queries now use GKE system metrics (`kubernetes_io:container_cpu_core_usage_time`, `kubernetes_io:container_memory_used_bytes`) which are automatically collected by GKE without requiring managed Prometheus collection to be enabled; `--prometheus-url` still uses standard Prometheus metric names
+
 ### Added
 - `--exclude-namespaces` flag to filter out system namespaces (default: `kube-system,gmp-system`), preventing GKE platform pods from polluting cost attribution
+- GCP Managed Prometheus as default utilization source: automatically fetches CPU and memory metrics via GMP when a project ID is available, with OAuth2 authentication; `--prometheus-url` overrides with a custom endpoint
+- Prometheus-based utilization metrics: `--prometheus-url` global flag fetches CPU and memory utilization from Prometheus to compute per-workload efficiency scores
+- Cost-weighted efficiency score: `efficiency = (cpu_util × cpu_cost + mem_util × mem_cost) / total_cost` identifies workloads with the highest optimization potential
+- Wasted cost metric: `wasted_cost_per_hour = cost_per_hour × (1 - efficiency)` quantifies the cost of underutilized resources
+- `watch` command: CPU%, MEM%, and WASTE columns displayed when `--prometheus-url` is set, with interactive sorting (keys 8/9 or 9/0 depending on column layout)
+- `record` command: utilization data (cpu_utilization, memory_utilization, efficiency_score, wasted_cost_per_hour) included in BigQuery and Parquet snapshots when Prometheus is configured
+- BigQuery schema: 4 new NULLABLE FLOAT64 columns for utilization metrics
+- `internal/prometheus` package: Prometheus HTTP API client for fetching container CPU/memory usage via PromQL instant queries
 - `record` command: `--output-file` flag to append `--dry-run` snapshots to a local Parquet file (same schema as BigQuery table)
 - Auto-detect `--region`, `--project`, and `--cluster-name` from GCE metadata server (GKE) and kubeconfig context (development); explicit CLI flags always take priority
 - Test coverage improvements across all packages (bigquery 84%→89%, kube 72%→76%, pricing 84%→86%)
@@ -16,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Tests for init container exclusion from resource requests, memory binary-to-SI unit conversion, partial resource requests, cost linearity, CostPerHour duration independence, nil labels aggregation, namespace-from-first-pod behavior, empty subtype grouping, price table duplicate/passthrough behavior, and catalog SKU edge cases
 
 ### Fixed
+- `watch` command: Prometheus fetch errors and utilization status are now displayed in the TUI header instead of being silently written to stderr (invisible in alt-screen mode)
 - BigQuery InsertID now includes Subtype field, preventing silent deduplication of rows that differ only by subtype
 - `record` command: snapshot timestamp is now captured before pod listing to accurately reflect the snapshot window start
 - `record` command: `--dry-run` flag to log rows without writing to BigQuery

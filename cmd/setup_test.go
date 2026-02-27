@@ -6,9 +6,9 @@ import (
 )
 
 func TestSetupRequiresProject(t *testing.T) {
-	saved := setupProject
-	defer func() { setupProject = saved }()
-	setupProject = ""
+	saved := project
+	defer func() { project = saved }()
+	project = ""
 
 	err := runSetup(rootCmd, nil)
 	if err == nil {

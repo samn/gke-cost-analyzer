@@ -52,10 +52,15 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
+	promClient, err := newPromClient(ctx)
+	if err != nil {
+		return err
+	}
+
 	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
 
-	model := tui.NewModel(ctx, cancel, lister, calc, lc, watchInterval)
+	model := tui.NewModel(ctx, cancel, lister, calc, lc, watchInterval, promClient, project)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

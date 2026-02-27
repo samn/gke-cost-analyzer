@@ -29,14 +29,11 @@ func TestApplyDefaultsFillsMissingRegion(t *testing.T) {
 }
 
 func TestApplyDefaultsFillsMissingProject(t *testing.T) {
-	savedProject := bqProject
-	savedSetupProject := setupProject
+	savedProject := project
 	defer func() {
-		bqProject = savedProject
-		setupProject = savedSetupProject
+		project = savedProject
 	}()
-	bqProject = ""
-	setupProject = ""
+	project = ""
 
 	d := envdefaults.NewDetector(
 		envdefaults.WithKubeContext("gke_my-project_us-central1_my-cluster"),
@@ -46,11 +43,8 @@ func TestApplyDefaultsFillsMissingProject(t *testing.T) {
 
 	applyDefaults(d, rootCmd)
 
-	if bqProject != "my-project" {
-		t.Errorf("bqProject = %q, want my-project", bqProject)
-	}
-	if setupProject != "my-project" {
-		t.Errorf("setupProject = %q, want my-project", setupProject)
+	if project != "my-project" {
+		t.Errorf("project = %q, want my-project", project)
 	}
 }
 
@@ -74,17 +68,17 @@ func TestApplyDefaultsFillsMissingCluster(t *testing.T) {
 
 func TestApplyDefaultsExplicitFlagWins(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 	}()
 
 	// Simulate explicit values (already set by user)
 	region = "europe-west1"
-	bqProject = "explicit-project"
+	project = "explicit-project"
 	clusterName = "explicit-cluster"
 
 	d := envdefaults.NewDetector(
@@ -99,8 +93,8 @@ func TestApplyDefaultsExplicitFlagWins(t *testing.T) {
 	if region != "europe-west1" {
 		t.Errorf("region = %q, want europe-west1 (explicit)", region)
 	}
-	if bqProject != "explicit-project" {
-		t.Errorf("bqProject = %q, want explicit-project (explicit)", bqProject)
+	if project != "explicit-project" {
+		t.Errorf("project = %q, want explicit-project (explicit)", project)
 	}
 	if clusterName != "explicit-cluster" {
 		t.Errorf("clusterName = %q, want explicit-cluster (explicit)", clusterName)
@@ -109,15 +103,15 @@ func TestApplyDefaultsExplicitFlagWins(t *testing.T) {
 
 func TestApplyDefaultsFromMetadataServer(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 	}()
 	region = ""
-	bqProject = ""
+	project = ""
 	clusterName = ""
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,8 +142,8 @@ func TestApplyDefaultsFromMetadataServer(t *testing.T) {
 	if region != "us-east4" {
 		t.Errorf("region = %q, want us-east4", region)
 	}
-	if bqProject != "gke-project" {
-		t.Errorf("bqProject = %q, want gke-project", bqProject)
+	if project != "gke-project" {
+		t.Errorf("project = %q, want gke-project", project)
 	}
 	if clusterName != "gke-cluster" {
 		t.Errorf("clusterName = %q, want gke-cluster", clusterName)
@@ -158,19 +152,19 @@ func TestApplyDefaultsFromMetadataServer(t *testing.T) {
 
 func TestRecordPassesValidationWithInferredDefaults(t *testing.T) {
 	saved := region
-	savedProject := bqProject
+	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		bqProject = savedProject
+		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
 
 	// Start with empty values
 	region = ""
-	bqProject = ""
+	project = ""
 	clusterName = ""
 	recordInterval = 5 * time.Minute
 
@@ -186,8 +180,8 @@ func TestRecordPassesValidationWithInferredDefaults(t *testing.T) {
 	if region != "us-central1" {
 		t.Errorf("region = %q, want us-central1", region)
 	}
-	if bqProject != "inferred-project" {
-		t.Errorf("bqProject = %q, want inferred-project", bqProject)
+	if project != "inferred-project" {
+		t.Errorf("project = %q, want inferred-project", project)
 	}
 	if clusterName != "inferred-cluster" {
 		t.Errorf("clusterName = %q, want inferred-cluster", clusterName)

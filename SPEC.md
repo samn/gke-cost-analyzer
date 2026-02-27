@@ -37,16 +37,27 @@ Real-time terminal display of workload costs. Fetches pod data on an interval
 interactive table via BubbleTea. Supports interactive column sorting with number
 keys.
 
-Flags: `--interval`, `--region` (required), `--namespace`, `--team-label`,
-`--workload-label`, `--subtype-label`.
+Flags: `--interval`, `--region` (required), `--project` (global), `--namespace`,
+`--team-label`, `--workload-label`, `--subtype-label`, `--prometheus-url` (optional).
+
+Utilization columns (CPU%, MEM%, WASTE) are automatically displayed when a
+Prometheus source is available — either GCP Managed Prometheus (default when
+project is detected) or a custom `--prometheus-url`. Utilization data is
+fetched on each refresh cycle.
 
 ### `record`
 Daemon mode: periodically snapshot pod costs and write aggregated records to
 BigQuery. Runs once immediately on startup, then on a ticker.
 
-Flags: `--interval` (default 5m), `--region` (required), `--project` (required),
+Flags: `--interval` (default 5m), `--region` (required), `--project` (required, global),
 `--cluster-name` (required), `--dataset`, `--table`, `--namespace`,
-`--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally).
+`--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally),
+`--prometheus-url` (optional).
+
+Utilization metrics are automatically fetched from GCP Managed Prometheus
+(default when project is detected) or a custom `--prometheus-url` before each
+snapshot. If the fetch fails, the snapshot proceeds without utilization data (a
+warning is logged to stderr).
 
 ### `setup`
 Create the BigQuery dataset and table with the correct schema, partitioning,
@@ -63,10 +74,22 @@ Print version, git commit, and build date.
 list of namespaces to exclude from pod listing. When `--namespace` targets a
 specific namespace the exclusion list is effectively a no-op. Set to an empty
 string to include all namespaces.
+`--project` (GCP project ID; auto-detected from GCE metadata or kubeconfig;
+used by `record`/`setup` for BigQuery and by all commands for GMP Prometheus).
+`--prometheus-url` (override Prometheus API base URL; defaults to GCP Managed
+Prometheus when a project ID is available).
 
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
 current kubeconfig context. Explicit CLI flags always take priority.
+
+**Prometheus auto-detection**: When `--prometheus-url` is not set and a GCP
+project ID is available (via `--project` or auto-detected), utilization metrics
+are automatically fetched from Google Cloud Managed Service for Prometheus (GMP)
+at `https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`.
+The request is authenticated using Application Default Credentials with the
+`monitoring.read` scope. Set `--prometheus-url` to a custom URL to use a
+self-hosted Prometheus instead.
 
 ## Core Data Collection Pipeline
 
@@ -207,11 +230,83 @@ Aggregated fields are summed across all pods in the group: `PodCount`,
   get `Subtype: ""` and are not differentiated by subtype.
 - **Empty input**: Returns an empty slice (not nil, not an error).
 
-### 5. BigQuery Snapshot Model (`internal/bigquery`)
+### 5. Utilization Metrics (`internal/prometheus`)
 
-Each record is a `CostSnapshot` with 16 fields: timestamp, project_id, region,
+By default, utilization metrics are fetched from **Google Cloud Managed Service
+for Prometheus (GMP)** when a GCP project ID is available. The GMP query
+endpoint is:
+`https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`
+
+Requests to GMP are authenticated using Application Default Credentials with
+the `https://www.googleapis.com/auth/monitoring.read` OAuth2 scope.
+
+A custom `--prometheus-url` can be specified to query a self-hosted Prometheus
+instance instead (no GCP auth is applied for custom URLs).
+
+CPU and memory utilization are fetched using instant queries. The client
+supports two query modes:
+
+**GMP system metrics** (default when using GMP with auto-detected project):
+Uses GKE system metrics that are automatically collected without requiring
+managed Prometheus collection. Metric names follow the Cloud Monitoring →
+PromQL naming convention (first `/` → `:`, remaining special chars → `_`).
+
+- **CPU**: `sum by (namespace_name, pod_name) (rate(kubernetes_io:container_cpu_core_usage_time[5m]))`
+  Returns actual CPU usage in cores per pod.
+- **Memory**: `sum by (namespace_name, pod_name) (kubernetes_io:container_memory_used_bytes{memory_type="non-evictable"})`
+  Returns non-evictable memory usage in bytes per pod (closest equivalent to
+  working set).
+
+**Standard Prometheus** (when `--prometheus-url` is set):
+Uses standard cAdvisor/kubelet metric names for self-hosted Prometheus or GMP
+with managed collection enabled.
+
+- **CPU**: `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))`
+  Returns actual CPU usage in cores per pod.
+- **Memory**: `sum by (namespace, pod) (container_memory_working_set_bytes{container!="",container!="POD"})`
+  Returns actual memory usage in bytes per pod.
+
+Utilization ratios are computed per aggregation group:
+
+```
+cpu_utilization = sum(actual_cpu_cores) / sum(requested_cpu_vcpu)
+mem_utilization = sum(actual_mem_bytes / 1e9) / sum(requested_mem_gb)
+```
+
+**Efficiency score** (cost-weighted utilization, 0–1):
+
+```
+efficiency = (min(cpu_util, 1.0) × cpu_cost_per_hour + min(mem_util, 1.0) × mem_cost_per_hour) / cost_per_hour
+```
+
+CPU utilization is capped at 1.0 for the efficiency calculation — CPU burst
+above 100% still means the requested resources are fully utilized.
+
+**Wasted cost**:
+
+```
+wasted_cost_per_hour = cost_per_hour × (1 - efficiency_score)
+```
+
+#### Edge cases
+- **Prometheus unavailable**: Utilization fields are nil/zero; snapshot proceeds
+  without utilization data (warning logged to stderr).
+- **Partial pod data**: If some pods have no Prometheus metrics, only pods with
+  data contribute to the utilization calculation.
+- **Zero cost**: If `cost_per_hour == 0`, efficiency score is 0 and wasted cost
+  is 0.
+- **CPU burst**: CPU utilization > 100% is valid (burst above requests); capped
+  at 1.0 for the efficiency score to avoid negative wasted cost.
+
+### 6. BigQuery Snapshot Model (`internal/bigquery`)
+
+Each record is a `CostSnapshot` with 20 fields: timestamp, project_id, region,
 cluster_name, namespace, team, workload, subtype, pod_count, cpu_request_vcpu,
-memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds.
+memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds,
+cpu_utilization, memory_utilization, efficiency_score, wasted_cost_per_hour.
+
+The last four fields are NULLABLE FLOAT64 columns — they are only populated
+when `--prometheus-url` is configured and utilization data is available.
 
 **Table configuration**:
 - Partitioned by DAY on `timestamp`

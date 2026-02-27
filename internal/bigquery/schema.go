@@ -21,6 +21,12 @@ type CostSnapshot struct {
 	TotalCost       float64   `json:"total_cost"`
 	IsSpot          bool      `json:"is_spot"`
 	IntervalSeconds int64     `json:"interval_seconds"`
+
+	// Utilization fields — nil when Prometheus data is not available.
+	CPUUtilization    *float64 `json:"cpu_utilization,omitempty"`
+	MemoryUtilization *float64 `json:"memory_utilization,omitempty"`
+	EfficiencyScore   *float64 `json:"efficiency_score,omitempty"`
+	WastedCostPerHour *float64 `json:"wasted_cost_per_hour,omitempty"`
 }
 
 // TableSchema returns the BigQuery table schema as a JSON-compatible structure
@@ -43,6 +49,10 @@ func TableSchema() []FieldSchema {
 		{Name: "total_cost", Type: "FLOAT64", Mode: "REQUIRED", Description: "Total cost for this window ($)"},
 		{Name: "is_spot", Type: "BOOL", Mode: "REQUIRED", Description: "Whether these pods are SPOT"},
 		{Name: "interval_seconds", Type: "INT64", Mode: "REQUIRED", Description: "Snapshot interval in seconds"},
+		{Name: "cpu_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average CPU utilization ratio (actual/requested)"},
+		{Name: "memory_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average memory utilization ratio (actual/requested)"},
+		{Name: "efficiency_score", Type: "FLOAT64", Mode: "NULLABLE", Description: "Cost-weighted utilization score (0-1)"},
+		{Name: "wasted_cost_per_hour", Type: "FLOAT64", Mode: "NULLABLE", Description: "Estimated wasted cost per hour ($)"},
 	}
 }
 
