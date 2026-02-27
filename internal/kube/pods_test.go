@@ -377,6 +377,60 @@ func TestIsSpotPod(t *testing.T) {
 	}
 }
 
+func TestNewTestPodInfo(t *testing.T) {
+	startTime := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pi := NewTestPodInfo("test-pod", "test-ns", 500, 1024, startTime, true, labels)
+
+	if pi.Name != "test-pod" {
+		t.Errorf("name = %s, want test-pod", pi.Name)
+	}
+	if pi.Namespace != "test-ns" {
+		t.Errorf("namespace = %s, want test-ns", pi.Namespace)
+	}
+	if pi.CPURequestMilli != 500 {
+		t.Errorf("CPU milli = %d, want 500", pi.CPURequestMilli)
+	}
+	if pi.CPURequestVCPU != 0.5 {
+		t.Errorf("CPU vCPU = %f, want 0.5", pi.CPURequestVCPU)
+	}
+	// 1024 MB = 1024 * 1,000,000 bytes = 1,024,000,000 bytes
+	expectedMemBytes := int64(1024 * 1_000_000)
+	if pi.MemRequestBytes != expectedMemBytes {
+		t.Errorf("mem bytes = %d, want %d", pi.MemRequestBytes, expectedMemBytes)
+	}
+	expectedMemGB := float64(expectedMemBytes) / 1e9
+	if pi.MemRequestGB != expectedMemGB {
+		t.Errorf("mem GB = %f, want %f", pi.MemRequestGB, expectedMemGB)
+	}
+	if !pi.StartTime.Equal(startTime) {
+		t.Errorf("start time = %v, want %v", pi.StartTime, startTime)
+	}
+	if !pi.IsSpot {
+		t.Error("expected IsSpot to be true")
+	}
+	if pi.Phase != corev1.PodRunning {
+		t.Errorf("phase = %s, want Running", pi.Phase)
+	}
+	if pi.Labels["team"] != "platform" {
+		t.Errorf("team label = %s, want platform", pi.Labels["team"])
+	}
+}
+
+func TestNewTestPodInfoZeroValues(t *testing.T) {
+	pi := NewTestPodInfo("empty", "ns", 0, 0, time.Time{}, false, nil)
+
+	if pi.CPURequestVCPU != 0 {
+		t.Errorf("expected 0 vCPU, got %f", pi.CPURequestVCPU)
+	}
+	if pi.MemRequestGB != 0 {
+		t.Errorf("expected 0 GB, got %f", pi.MemRequestGB)
+	}
+	if pi.Labels != nil {
+		t.Errorf("expected nil labels, got %v", pi.Labels)
+	}
+}
+
 func TestExtractPodInfoZeroRequests(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "default"},

@@ -326,6 +326,149 @@ func TestRecordRequiresClusterName(t *testing.T) {
 	}
 }
 
+func TestRecordSnapshotEmptyPods(t *testing.T) {
+	lister := &mockPodLister{pods: nil}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, nil)
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	// Capture stdout for dry-run
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("unexpected error for empty pods: %v", err)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	if !strings.Contains(output, "Would write 0 records (0 pods)") {
+		t.Errorf("expected dry-run summary for 0 pods, got: %s", output)
+	}
+}
+
+func TestRecordSnapshotMultipleGroups(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+			kube.NewTestPodInfo("worker-1", "batch", 1000, 1024, startTime, true,
+				map[string]string{"team": "data", "app": "etl"}),
+		},
+	}
+
+	var receivedRows int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Rows []json.RawMessage `json:"rows"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		receivedRows = len(body.Rows)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer srv.Close()
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.Spot, UnitPrice: 0.00001},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.Spot, UnitPrice: 0.0012},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Different teams/workloads/spot → 2 groups → 2 rows
+	if receivedRows != 2 {
+		t.Errorf("expected 2 BQ rows, got %d", receivedRows)
+	}
+}
+
+func TestRecordSnapshotWriteError(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+		},
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"error":"access denied"}`))
+	}))
+	defer srv.Close()
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	if err == nil {
+		t.Fatal("expected error from BigQuery write failure")
+	}
+	if !strings.Contains(err.Error(), "writing to BigQuery") {
+		t.Errorf("error should mention BigQuery write, got: %v", err)
+	}
+}
+
+func TestRecordRejectsNegativeInterval(t *testing.T) {
+	saved := region
+	savedProject := bqProject
+	savedCluster := clusterName
+	savedInterval := recordInterval
+	defer func() {
+		region = saved
+		bqProject = savedProject
+		clusterName = savedCluster
+		recordInterval = savedInterval
+	}()
+	region = "us-central1"
+	bqProject = "proj"
+	clusterName = "cluster"
+	recordInterval = -5 * time.Minute
+
+	err := runRecord(rootCmd, nil)
+	if err == nil {
+		t.Fatal("expected error for negative interval")
+	}
+	if !strings.Contains(err.Error(), "--interval") {
+		t.Errorf("error should mention --interval, got: %v", err)
+	}
+}
+
 func TestRecordRejectsZeroInterval(t *testing.T) {
 	saved := region
 	savedProject := bqProject

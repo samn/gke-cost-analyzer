@@ -129,6 +129,41 @@ func TestWriteEmpty(t *testing.T) {
 	}
 }
 
+func TestWriteEmptySlice(t *testing.T) {
+	writer := NewWriter("proj", "ds", "tbl")
+	err := writer.Write(context.Background(), []CostSnapshot{})
+	if err != nil {
+		t.Fatal("expected no error for empty slice")
+	}
+}
+
+func TestWithWriterHTTPClient(t *testing.T) {
+	customClient := &http.Client{}
+	w := NewWriter("proj", "ds", "tbl", WithWriterHTTPClient(customClient))
+	if w.httpClient != customClient {
+		t.Error("expected custom HTTP client to be set")
+	}
+}
+
+func TestNewWriterDefaults(t *testing.T) {
+	w := NewWriter("p", "d", "t")
+	if w.project != "p" {
+		t.Errorf("project = %s, want p", w.project)
+	}
+	if w.dataset != "d" {
+		t.Errorf("dataset = %s, want d", w.dataset)
+	}
+	if w.table != "t" {
+		t.Errorf("table = %s, want t", w.table)
+	}
+	if w.baseURL != bigqueryAPIBase {
+		t.Errorf("baseURL = %s, want %s", w.baseURL, bigqueryAPIBase)
+	}
+	if w.httpClient == nil {
+		t.Error("expected default HTTP client")
+	}
+}
+
 func TestWriteAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -172,6 +207,44 @@ func TestWriteInsertErrors(t *testing.T) {
 	// Verify error message contains details (no longer just goes to log)
 	if !strings.Contains(err.Error(), "invalid") || !strings.Contains(err.Error(), "bad row") {
 		t.Errorf("error should contain details, got: %v", err)
+	}
+}
+
+func TestWriteSubtypeDifferentiatesInsertID(t *testing.T) {
+	var receivedBody insertAllRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(insertAllResponse{})
+	}))
+	defer srv.Close()
+
+	writer := NewWriter("proj", "ds", "tbl", WithWriterBaseURL(srv.URL))
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	// Two snapshots identical except for Subtype — must get different InsertIDs
+	snapshots := []CostSnapshot{
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "alpha", Workload: "svc1", Subtype: "extract", IsSpot: false},
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "alpha", Workload: "svc1", Subtype: "transform", IsSpot: false},
+	}
+
+	err := writer.Write(context.Background(), snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(receivedBody.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(receivedBody.Rows))
+	}
+
+	if receivedBody.Rows[0].InsertID == receivedBody.Rows[1].InsertID {
+		t.Errorf("rows with different subtypes must have different InsertIDs, both got: %s",
+			receivedBody.Rows[0].InsertID)
 	}
 }
 

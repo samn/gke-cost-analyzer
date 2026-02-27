@@ -136,3 +136,54 @@ func TestEnsureTableAPIError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestWithSetupHTTPClient(t *testing.T) {
+	customClient := &http.Client{}
+	sc := NewSetupClient("proj", WithSetupHTTPClient(customClient))
+	if sc.httpClient != customClient {
+		t.Error("expected custom HTTP client to be set")
+	}
+}
+
+func TestNewSetupClientDefaults(t *testing.T) {
+	sc := NewSetupClient("my-project")
+	if sc.project != "my-project" {
+		t.Errorf("project = %s, want my-project", sc.project)
+	}
+	if sc.baseURL != bigqueryAPIBase {
+		t.Errorf("baseURL = %s, want %s", sc.baseURL, bigqueryAPIBase)
+	}
+	if sc.httpClient == nil {
+		t.Error("expected default HTTP client")
+	}
+}
+
+func TestEnsureDatasetRequestBody(t *testing.T) {
+	var receivedBody datasetRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %s, want application/json", ct)
+		}
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}))
+	defer srv.Close()
+
+	sc := NewSetupClient("proj-123", WithSetupBaseURL(srv.URL))
+	err := sc.EnsureDataset(context.Background(), "my_dataset", "EU")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if receivedBody.DatasetReference.ProjectID != "proj-123" {
+		t.Errorf("project = %s, want proj-123", receivedBody.DatasetReference.ProjectID)
+	}
+	if receivedBody.DatasetReference.DatasetID != "my_dataset" {
+		t.Errorf("dataset = %s, want my_dataset", receivedBody.DatasetReference.DatasetID)
+	}
+	if receivedBody.Location != "EU" {
+		t.Errorf("location = %s, want EU", receivedBody.Location)
+	}
+}
