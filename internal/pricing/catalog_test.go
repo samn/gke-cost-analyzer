@@ -351,13 +351,85 @@ func TestParseUnitPrice(t *testing.T) {
 		{"both", "1", 500000000, 1.5},
 		{"empty units", "", 4000000, 0.004},
 		{"invalid units falls back to nanos only", "not-a-number", 4000000, 0.004},
+		{"large units", "100", 0, 100.0},
+		{"small nanos", "0", 1, 1e-9},
+		{"max nanos", "0", 999999999, 0.999999999},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseUnitPrice(tt.units, tt.nanos)
-			if got != tt.expected {
+			if !approxEqual(got, tt.expected, 1e-12) {
 				t.Errorf("parseUnitPrice(%q, %d) = %f, want %f", tt.units, tt.nanos, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestExtractAutopilotPricesNonMatchingSKU(t *testing.T) {
+	// An SKU that doesn't match any Autopilot substring should return nil.
+	sku := catalogSKU{
+		Description: "Some totally unrelated Compute Engine SKU",
+		GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
+		PricingInfo: []skuPricingInfo{
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{UnitPrice: unitPrice{Units: "1", Nanos: 0}},
+				},
+			}},
+		},
+	}
+
+	prices := extractAutopilotPrices(sku)
+	if len(prices) != 0 {
+		t.Errorf("expected 0 prices for non-matching SKU, got %d", len(prices))
+	}
+}
+
+func TestExtractAutopilotPricesMultiplePricingInfos(t *testing.T) {
+	// SKU with multiple PricingInfo entries — each should produce a price.
+	sku := catalogSKU{
+		Description: "Autopilot Pod mCPU Requests",
+		GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
+		PricingInfo: []skuPricingInfo{
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{UnitPrice: unitPrice{Nanos: 35000}},
+				},
+			}},
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{UnitPrice: unitPrice{Nanos: 40000}},
+				},
+			}},
+		},
+	}
+
+	prices := extractAutopilotPrices(sku)
+	// Each PricingInfo × each region = 2 prices
+	if len(prices) != 2 {
+		t.Fatalf("expected 2 prices (one per PricingInfo), got %d", len(prices))
+	}
+	if prices[0].ResourceType != CPU || prices[0].Tier != OnDemand {
+		t.Errorf("first price should be CPU/OnDemand, got %s/%s", prices[0].ResourceType, prices[0].Tier)
+	}
+}
+
+func TestExtractAutopilotPricesEmptyRegionsAndServiceRegions(t *testing.T) {
+	// SKU with no regions at all should produce no prices.
+	sku := catalogSKU{
+		Description: "Autopilot Pod mCPU Requests",
+		GeoTaxonomy: geoTaxonomy{Regions: nil},
+		PricingInfo: []skuPricingInfo{
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{UnitPrice: unitPrice{Nanos: 35000}},
+				},
+			}},
+		},
+	}
+
+	prices := extractAutopilotPrices(sku)
+	if len(prices) != 0 {
+		t.Errorf("expected 0 prices when both Regions and ServiceRegions are empty, got %d", len(prices))
 	}
 }

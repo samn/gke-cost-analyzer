@@ -454,3 +454,134 @@ func TestExtractPodInfoZeroRequests(t *testing.T) {
 		t.Errorf("expected Running phase, got %s", info.Phase)
 	}
 }
+
+func TestExtractPodInfoInitContainersNotCounted(t *testing.T) {
+	// Init containers are NOT counted in Autopilot billing — only regular
+	// containers contribute to resource requests.
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "with-init", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{
+					Name: "init",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("2Gi"),
+						},
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "main",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("256Mi"),
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	info := extractPodInfo(pod)
+	// Only the main container's 500m should be counted, not the init container's 2000m
+	if info.CPURequestMilli != 500 {
+		t.Errorf("CPU milli = %d, want 500 (init container should not be counted)", info.CPURequestMilli)
+	}
+	// Only the main container's 256Mi should be counted
+	expectedMemBytes := int64(256 * 1024 * 1024)
+	if info.MemRequestBytes != expectedMemBytes {
+		t.Errorf("mem bytes = %d, want %d (init container should not be counted)", info.MemRequestBytes, expectedMemBytes)
+	}
+}
+
+func TestExtractPodInfoMemoryUnitConversion(t *testing.T) {
+	// Verify the Kubernetes binary units (Mi, Gi) are correctly converted to
+	// SI GB (10^9 bytes) for billing purposes.
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "mem-test", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "main",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceMemory: resource.MustParse("1Gi"),
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	info := extractPodInfo(pod)
+	// 1 Gi = 1073741824 bytes
+	if info.MemRequestBytes != 1073741824 {
+		t.Errorf("1Gi should be 1073741824 bytes, got %d", info.MemRequestBytes)
+	}
+	// GB conversion: 1073741824 / 1e9 = 1.073741824 (NOT 1.0)
+	expectedGB := 1073741824.0 / 1e9
+	if info.MemRequestGB != expectedGB {
+		t.Errorf("1Gi in GB = %f, want %f (binary vs SI)", info.MemRequestGB, expectedGB)
+	}
+}
+
+func TestIsSpotPodBothSelectors(t *testing.T) {
+	// Pod with both SPOT selectors set should still be detected as SPOT.
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{
+				"cloud.google.com/gke-spot":      "true",
+				"cloud.google.com/compute-class": "autopilot-spot",
+			},
+		},
+	}
+	if !isSpotPod(pod) {
+		t.Error("pod with both SPOT selectors should be detected as SPOT")
+	}
+}
+
+func TestExtractPodInfoPartialRequests(t *testing.T) {
+	// Pod where only one container has CPU requests and another only has memory.
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "partial", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "cpu-only",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU: resource.MustParse("500m"),
+						},
+					},
+				},
+				{
+					Name: "mem-only",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceMemory: resource.MustParse("512Mi"),
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	info := extractPodInfo(pod)
+	if info.CPURequestMilli != 500 {
+		t.Errorf("CPU milli = %d, want 500", info.CPURequestMilli)
+	}
+	expectedMemBytes := int64(512 * 1024 * 1024)
+	if info.MemRequestBytes != expectedMemBytes {
+		t.Errorf("mem bytes = %d, want %d", info.MemRequestBytes, expectedMemBytes)
+	}
+}

@@ -205,3 +205,73 @@ func TestCostPerHour(t *testing.T) {
 		t.Errorf("CostPerHour = %f, want %f", cost.CostPerHour, expectedPerHour)
 	}
 }
+
+func TestCostPerHourIndependentOfDuration(t *testing.T) {
+	// CostPerHour should be the same regardless of how long the pod has been running.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	pod1h := kube.NewTestPodInfo("app", "default", 1000, 1024, now.Add(-1*time.Hour), false, nil)
+	pod10h := kube.NewTestPodInfo("app", "default", 1000, 1024, now.Add(-10*time.Hour), false, nil)
+
+	calc := NewCalculator("us-central1", testPriceTable(), func() time.Time { return now })
+	cost1h := calc.Calculate(pod1h)
+	cost10h := calc.Calculate(pod10h)
+
+	if !approxEqual(cost1h.CostPerHour, cost10h.CostPerHour, 1e-9) {
+		t.Errorf("CostPerHour should be duration-independent: 1h=%f, 10h=%f",
+			cost1h.CostPerHour, cost10h.CostPerHour)
+	}
+}
+
+func TestCalculateTotalCostScalesLinearly(t *testing.T) {
+	// Total cost should scale linearly with duration.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	pod2h := kube.NewTestPodInfo("app", "default", 1000, 1024, now.Add(-2*time.Hour), false, nil)
+	pod4h := kube.NewTestPodInfo("app", "default", 1000, 1024, now.Add(-4*time.Hour), false, nil)
+
+	calc := NewCalculator("us-central1", testPriceTable(), func() time.Time { return now })
+	cost2h := calc.Calculate(pod2h)
+	cost4h := calc.Calculate(pod4h)
+
+	// 4h cost should be exactly 2x the 2h cost
+	if !approxEqual(cost4h.TotalCost, 2*cost2h.TotalCost, 1e-9) {
+		t.Errorf("cost should scale linearly: 2h=%f, 4h=%f (expected 2x)", cost2h.TotalCost, cost4h.TotalCost)
+	}
+}
+
+func TestCalculateNilNowUsesRealTime(t *testing.T) {
+	// Passing nil for now should use time.Now (calculator should not panic).
+	startTime := time.Now().Add(-1 * time.Hour)
+	pod := kube.NewTestPodInfo("app", "default", 1000, 1024, startTime, false, nil)
+
+	calc := NewCalculator("us-central1", testPriceTable(), nil)
+	cost := calc.Calculate(pod)
+
+	// Should have roughly 1 hour of cost
+	if cost.DurationHours < 0.9 || cost.DurationHours > 1.1 {
+		t.Errorf("expected ~1h duration with nil now, got %f", cost.DurationHours)
+	}
+	if cost.TotalCost <= 0 {
+		t.Error("expected positive cost with nil now and real running pod")
+	}
+}
+
+func TestCalculateEmptyPriceTable(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+	pod := kube.NewTestPodInfo("app", "default", 1000, 1024, startTime, false, nil)
+
+	pt := pricing.FromPrices(nil)
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	cost := calc.Calculate(pod)
+
+	if cost.TotalCost != 0 {
+		t.Errorf("expected 0 cost with empty price table, got %f", cost.TotalCost)
+	}
+	if cost.CostPerHour != 0 {
+		t.Errorf("expected 0 $/hr with empty price table, got %f", cost.CostPerHour)
+	}
+	// Duration should still be computed
+	if !approxEqual(cost.DurationHours, 1.0, 0.001) {
+		t.Errorf("duration should be 1h even with no prices, got %f", cost.DurationHours)
+	}
+}

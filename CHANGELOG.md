@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `record` command: `--output-file` flag to append `--dry-run` snapshots to a local Parquet file (same schema as BigQuery table)
 - Auto-detect `--region`, `--project`, and `--cluster-name` from GCE metadata server (GKE) and kubeconfig context (development); explicit CLI flags always take priority
 - Test coverage improvements across all packages (bigquery 84%→89%, kube 72%→76%, pricing 84%→86%)
+- Comprehensive SPEC.md documentation of core data collection pipeline, cost calculation formulas, unit conversions, aggregation logic, and edge cases
+- Tests for init container exclusion from resource requests, memory binary-to-SI unit conversion, partial resource requests, cost linearity, CostPerHour duration independence, nil labels aggregation, namespace-from-first-pod behavior, empty subtype grouping, price table duplicate/passthrough behavior, and catalog SKU edge cases
 
 ### Fixed
 - BigQuery InsertID now includes Subtype field, preventing silent deduplication of rows that differ only by subtype

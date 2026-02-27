@@ -49,3 +49,42 @@ func TestFromPricesEmpty(t *testing.T) {
 		t.Errorf("expected empty price table, got %d entries", len(pt))
 	}
 }
+
+func TestFromPricesCPUConversion(t *testing.T) {
+	// CPU prices from the billing API are per-mCPU-hour.
+	// FromPrices must multiply by 1000 to get per-vCPU-hour.
+	prices := []Price{
+		{Region: "us-central1", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.000035},
+	}
+	pt := FromPrices(prices)
+	got := pt.Lookup("us-central1", CPU, OnDemand)
+	// 0.000035 * 1000 = 0.035
+	if math.Abs(got-0.035) > 1e-9 {
+		t.Errorf("CPU price should be converted from mCPU to vCPU: got %f, want 0.035", got)
+	}
+}
+
+func TestFromPricesMemoryPassthrough(t *testing.T) {
+	// Memory prices are per-GB-hour and should NOT be multiplied.
+	prices := []Price{
+		{Region: "us-central1", ResourceType: Memory, Tier: OnDemand, UnitPrice: 0.004},
+	}
+	pt := FromPrices(prices)
+	got := pt.Lookup("us-central1", Memory, OnDemand)
+	if math.Abs(got-0.004) > 1e-9 {
+		t.Errorf("Memory price should pass through unchanged: got %f, want 0.004", got)
+	}
+}
+
+func TestFromPricesDuplicateLastWins(t *testing.T) {
+	// If two prices have the same key, the last one wins.
+	prices := []Price{
+		{Region: "us-central1", ResourceType: Memory, Tier: OnDemand, UnitPrice: 0.004},
+		{Region: "us-central1", ResourceType: Memory, Tier: OnDemand, UnitPrice: 0.006},
+	}
+	pt := FromPrices(prices)
+	got := pt.Lookup("us-central1", Memory, OnDemand)
+	if math.Abs(got-0.006) > 1e-9 {
+		t.Errorf("duplicate key should use last price: got %f, want 0.006", got)
+	}
+}

@@ -305,3 +305,120 @@ func TestAggregateEmpty(t *testing.T) {
 		t.Errorf("expected 0 groups for empty input, got %d", len(aggs))
 	}
 }
+
+func TestAggregateEmptySlice(t *testing.T) {
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := Aggregate([]PodCost{}, lc)
+
+	if len(aggs) != 0 {
+		t.Errorf("expected 0 groups for empty slice, got %d", len(aggs))
+	}
+}
+
+func TestAggregateNamespaceFromFirstPod(t *testing.T) {
+	// When pods from different namespaces share the same labels,
+	// the aggregated group takes the namespace from the first pod seen.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "ns-a", 500, 512, startTime, false, labels),
+		kube.NewTestPodInfo("web-2", "ns-b", 500, 512, startTime, false, labels),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := Aggregate(costs, lc)
+
+	if len(aggs) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(aggs))
+	}
+
+	// Namespace comes from the first pod seen (ns-a)
+	if aggs[0].Namespace != "ns-a" {
+		t.Errorf("namespace = %s, want ns-a (from first pod)", aggs[0].Namespace)
+	}
+	if aggs[0].PodCount != 2 {
+		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	}
+}
+
+func TestAggregateNoSubtypeLabelGroupsTogether(t *testing.T) {
+	// When SubtypeLabel is empty, pods with different values in what would be
+	// the subtype label should still group together.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("step1", "default", 500, 512, startTime, false,
+			map[string]string{"team": "data", "app": "pipeline", "step": "extract"}),
+		kube.NewTestPodInfo("step2", "default", 500, 512, startTime, false,
+			map[string]string{"team": "data", "app": "pipeline", "step": "transform"}),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	// No subtype label configured — all pods group together
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app", SubtypeLabel: ""}
+	aggs := Aggregate(costs, lc)
+
+	if len(aggs) != 1 {
+		t.Fatalf("expected 1 group when SubtypeLabel is empty, got %d", len(aggs))
+	}
+	if aggs[0].PodCount != 2 {
+		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	}
+	if aggs[0].Key.Subtype != "" {
+		t.Errorf("subtype should be empty when SubtypeLabel is not configured, got %q", aggs[0].Key.Subtype)
+	}
+}
+
+func TestAggregateNilLabelsMap(t *testing.T) {
+	// Pods with nil labels should be handled gracefully.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("pod1", "default", 100, 128, startTime, false, nil),
+		kube.NewTestPodInfo("pod2", "default", 100, 128, startTime, false, nil),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := Aggregate(costs, lc)
+
+	// Both pods have nil labels → both get "" for team and workload → one group
+	if len(aggs) != 1 {
+		t.Fatalf("expected 1 group for nil-label pods, got %d", len(aggs))
+	}
+	if aggs[0].Key.Team != "" {
+		t.Errorf("team should be empty for nil labels, got %q", aggs[0].Key.Team)
+	}
+	if aggs[0].Key.Workload != "" {
+		t.Errorf("workload should be empty for nil labels, got %q", aggs[0].Key.Workload)
+	}
+	if aggs[0].PodCount != 2 {
+		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	}
+}
