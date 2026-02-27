@@ -538,8 +538,8 @@ func TestIsSpotPodBothSelectors(t *testing.T) {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{
-				"cloud.google.com/gke-spot":       "true",
-				"cloud.google.com/compute-class":  "autopilot-spot",
+				"cloud.google.com/gke-spot":      "true",
+				"cloud.google.com/compute-class": "autopilot-spot",
 			},
 		},
 	}

@@ -15,3 +15,43 @@ All user-facing changes must be documented in `CHANGELOG.md` following the
 [Keep a Changelog](https://keepachangelog.com/) format. Add entries under the
 `[Unreleased]` section as you make changes. Categories: Added, Changed,
 Deprecated, Removed, Fixed, Security.
+
+## Pre-commit checks and CI
+
+Before committing, run the same checks that CI runs. CI executes
+`prek run --all-files` which runs all hooks defined in
+`.pre-commit-config.yaml`. These checks **must** pass before pushing:
+
+1. **Trailing whitespace** — no trailing spaces on any line
+2. **End-of-file fixer** — all files must end with a newline
+3. **check-merge-conflict** — no merge conflict markers
+4. **check-yaml / check-json / check-toml** — valid config files
+5. **detect-private-key** — no private keys committed
+6. **check-added-large-files** — no files > 1024 KB
+7. **gofmt** (`gofmt -l -w`) — all Go files must be formatted
+8. **go vet** (`go vet ./...`) — no vet warnings
+9. **go build** (`go build ./...`) — project must compile
+10. **go test** (`go test ./...`) — all tests must pass
+11. **golangci-lint** (`mise exec -- golangci-lint run`) — no lint warnings
+
+To run all checks locally (same as CI):
+
+```sh
+prek run --all-files
+```
+
+Or run individual checks manually:
+
+```sh
+gofmt -l -w .
+go vet ./...
+go build ./...
+go test -race ./...
+mise exec -- golangci-lint run
+```
+
+CI is defined in `.github/workflows/ci.yaml` and runs two jobs:
+- **Lint & Build**: `prek run --all-files` (all hooks above)
+- **Test**: `go test -race -v ./...` (tests with race detector)
+
+Both jobs must pass for a PR to merge.
