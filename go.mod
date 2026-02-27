@@ -5,6 +5,8 @@ go 1.25.1
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/getsentry/sentry-go v0.43.0
+	github.com/parquet-go/parquet-go v0.28.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.30.0
 	k8s.io/api v0.35.1
@@ -47,7 +49,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
-	github.com/parquet-go/parquet-go v0.28.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
