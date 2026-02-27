@@ -149,3 +149,103 @@ func TestCacheCorruptFile(t *testing.T) {
 		t.Fatal("expected nil for corrupt cache file")
 	}
 }
+
+func TestCacheLoadReadError(t *testing.T) {
+	// Point cache at a file (not a directory) so ReadFile fails with a non-NotExist error.
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "blockingfile")
+	if err := os.WriteFile(filePath, []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use the file as the cache dir — reading filePath/prices.json will fail
+	// because filePath is a file, not a directory.
+	cache, err := NewCache(WithCacheDir(filePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cache.Load()
+	if err == nil {
+		t.Fatal("expected error when cache dir is a file")
+	}
+}
+
+func TestCacheSaveCreatesDirectory(t *testing.T) {
+	dir := t.TempDir()
+	subDir := filepath.Join(dir, "nested", "cache")
+
+	cache, err := NewCache(WithCacheDir(subDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prices := []Price{
+		{Region: "us-central1", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.035},
+	}
+
+	if err := cache.Save(prices); err != nil {
+		t.Fatalf("Save should create nested dirs: %v", err)
+	}
+
+	// Verify the file exists
+	if _, err := os.Stat(filepath.Join(subDir, cacheFileName)); err != nil {
+		t.Fatal("expected cache file to exist in nested dir")
+	}
+}
+
+func TestCacheTTLOption(t *testing.T) {
+	dir := t.TempDir()
+	savedAt := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	// Save with default TTL
+	saveCache, err := NewCache(
+		WithCacheDir(dir),
+		WithCacheTTL(10*time.Minute),
+		WithNowFunc(func() time.Time { return savedAt }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prices := []Price{
+		{Region: "us-central1", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.035},
+	}
+	if err := saveCache.Save(prices); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load 5 minutes later — should succeed with 10m TTL
+	loadCache, err := NewCache(
+		WithCacheDir(dir),
+		WithCacheTTL(10*time.Minute),
+		WithNowFunc(func() time.Time { return savedAt.Add(5 * time.Minute) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadCache.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded == nil {
+		t.Fatal("expected valid cache within custom TTL")
+	}
+
+	// Load 15 minutes later — should expire with 10m TTL
+	expiredCache, err := NewCache(
+		WithCacheDir(dir),
+		WithCacheTTL(10*time.Minute),
+		WithNowFunc(func() time.Time { return savedAt.Add(15 * time.Minute) }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = expiredCache.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded != nil {
+		t.Fatal("expected nil for cache expired beyond custom TTL")
+	}
+}

@@ -259,6 +259,85 @@ func TestFetchPricesAPIError(t *testing.T) {
 	}
 }
 
+func TestExtractAutopilotPricesServiceRegionsFallback(t *testing.T) {
+	// When GeoTaxonomy.Regions is empty, fall back to ServiceRegions.
+	sku := catalogSKU{
+		Description:    "Autopilot Pod mCPU Requests",
+		GeoTaxonomy:    geoTaxonomy{Regions: nil},
+		ServiceRegions: []string{"us-west1", "us-east1"},
+		PricingInfo: []skuPricingInfo{
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{UnitPrice: unitPrice{Nanos: 35000}},
+				},
+			}},
+		},
+	}
+
+	prices := extractAutopilotPrices(sku)
+	if len(prices) != 2 {
+		t.Fatalf("expected 2 prices (one per ServiceRegion), got %d", len(prices))
+	}
+
+	regions := map[string]bool{}
+	for _, p := range prices {
+		regions[p.Region] = true
+	}
+	if !regions["us-west1"] || !regions["us-east1"] {
+		t.Errorf("expected us-west1 and us-east1, got %v", regions)
+	}
+}
+
+func TestExtractAutopilotPricesSkipsZeroPrice(t *testing.T) {
+	// A SKU with only zero-price tiered rates should produce no prices.
+	sku := catalogSKU{
+		Description: "Autopilot Pod mCPU Requests",
+		GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
+		PricingInfo: []skuPricingInfo{
+			{PricingExpression: pricingExpression{
+				TieredRates: []tieredRate{
+					{StartUsageAmount: 0, UnitPrice: unitPrice{Units: "0", Nanos: 0}},
+				},
+			}},
+		},
+	}
+
+	prices := extractAutopilotPrices(sku)
+	if len(prices) != 0 {
+		t.Errorf("expected 0 prices for zero-rate SKU, got %d", len(prices))
+	}
+}
+
+func TestExtractUnitPriceMultipleTiers(t *testing.T) {
+	// The first non-zero tier should be returned.
+	pi := skuPricingInfo{
+		PricingExpression: pricingExpression{
+			TieredRates: []tieredRate{
+				{StartUsageAmount: 0, UnitPrice: unitPrice{Units: "0", Nanos: 0}},
+				{StartUsageAmount: 1, UnitPrice: unitPrice{Units: "0", Nanos: 50000}},
+			},
+		},
+	}
+
+	price := extractUnitPrice(pi)
+	if !approxEqual(price, 0.00005, 1e-9) {
+		t.Errorf("expected 0.00005, got %f", price)
+	}
+}
+
+func TestExtractUnitPriceNoTiers(t *testing.T) {
+	pi := skuPricingInfo{
+		PricingExpression: pricingExpression{
+			TieredRates: nil,
+		},
+	}
+
+	price := extractUnitPrice(pi)
+	if price != 0 {
+		t.Errorf("expected 0 for empty tiers, got %f", price)
+	}
+}
+
 func TestParseUnitPrice(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -271,6 +350,7 @@ func TestParseUnitPrice(t *testing.T) {
 		{"nanos only", "0", 35000000, 0.035},
 		{"both", "1", 500000000, 1.5},
 		{"empty units", "", 4000000, 0.004},
+		{"invalid units falls back to nanos only", "not-a-number", 4000000, 0.004},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

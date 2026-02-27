@@ -126,6 +126,10 @@ type snapshotConfig struct {
 }
 
 func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64) error {
+	// Capture timestamp before listing pods so it reflects the start of the
+	// snapshot window, not the end of processing.
+	now := time.Now()
+
 	pods, err := lister.ListPods(ctx)
 	if err != nil {
 		return fmt.Errorf("listing pods: %w", err)
@@ -133,7 +137,6 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 
 	costs := calc.CalculateAll(pods)
 	aggs := cost.Aggregate(costs, lc)
-	now := time.Now()
 
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
