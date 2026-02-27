@@ -13,6 +13,7 @@ import (
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	pqwriter "github.com/samn/autopilot-cost-analyzer/internal/parquet"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -79,6 +80,12 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
+	var promClient *prometheus.Client
+	if prometheusURL != "" {
+		promClient = prometheus.NewClient(prometheusURL)
+		fmt.Printf("Fetching utilization metrics from %s\n", prometheusURL)
+	}
+
 	var writer *bigquery.Writer
 	if dryRun {
 		if outputFile != "" {
@@ -111,7 +118,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	defer ticker.Stop()
 
 	// Run once immediately
-	if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
+	if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
@@ -121,7 +128,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
+			if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
 			}
 		}
@@ -135,7 +142,7 @@ type snapshotConfig struct {
 	clusterName string
 }
 
-func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
+func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
 	// Capture timestamp before listing pods so it reflects the start of the
 	// snapshot window, not the end of processing.
 	now := time.Now()
@@ -145,8 +152,18 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 		return fmt.Errorf("listing pods: %w", err)
 	}
 
+	// Fetch utilization data from Prometheus if configured.
+	var usage map[prometheus.PodKey]prometheus.PodUsage
+	if promClient != nil {
+		usage, err = promClient.FetchUsage(ctx)
+		if err != nil {
+			// Log warning but continue without utilization data.
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch utilization metrics: %v\n", err)
+		}
+	}
+
 	costs := calc.CalculateAll(pods)
-	aggs := cost.Aggregate(costs, lc)
+	aggs := cost.AggregateWithUtilization(costs, lc, usage)
 
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
@@ -184,7 +201,7 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 }
 
 func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {
-	return bigquery.CostSnapshot{
+	snap := bigquery.CostSnapshot{
 		Timestamp:       ts,
 		ProjectID:       sc.projectID,
 		Region:          sc.region,
@@ -202,6 +219,13 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		IsSpot:          a.Key.IsSpot,
 		IntervalSeconds: intervalSecs,
 	}
+	if a.HasUtilization {
+		snap.CPUUtilization = &a.CPUUtilization
+		snap.MemoryUtilization = &a.MemUtilization
+		snap.EfficiencyScore = &a.EfficiencyScore
+		snap.WastedCostPerHour = &a.WastedCostPerHour
+	}
+	return snap
 }
 
 func authHTTPClient(ctx context.Context) (*http.Client, error) {

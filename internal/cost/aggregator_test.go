@@ -6,6 +6,7 @@ import (
 
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 )
 
 func TestAggregateSingleGroup(t *testing.T) {
@@ -420,5 +421,272 @@ func TestAggregateNilLabelsMap(t *testing.T) {
 	}
 	if aggs[0].PodCount != 2 {
 		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	}
+}
+
+func TestAggregateWithUtilizationBasic(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "default", 1000, 1000, startTime, false, labels), // 1 vCPU, 1 GB
+		kube.NewTestPodInfo("web-2", "default", 1000, 1000, startTime, false, labels), // 1 vCPU, 1 GB
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	usage := map[prometheus.PodKey]prometheus.PodUsage{
+		{Namespace: "default", Pod: "web-1"}: {CPUCores: 0.5, MemoryBytes: 500_000_000},  // 50% CPU, 50% mem
+		{Namespace: "default", Pod: "web-2"}: {CPUCores: 0.25, MemoryBytes: 250_000_000}, // 25% CPU, 25% mem
+	}
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, usage)
+
+	if len(aggs) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(aggs))
+	}
+
+	agg := aggs[0]
+	if !agg.HasUtilization {
+		t.Fatal("expected HasUtilization = true")
+	}
+
+	// CPU: total used = 0.75 cores, total requested = 2 vCPU → 37.5%
+	if !approxEqual(agg.CPUUtilization, 0.375, 0.001) {
+		t.Errorf("CPUUtilization = %f, want 0.375", agg.CPUUtilization)
+	}
+
+	// Memory: total used = 0.75 GB, total requested = 2 GB → 37.5%
+	if !approxEqual(agg.MemUtilization, 0.375, 0.001) {
+		t.Errorf("MemUtilization = %f, want 0.375", agg.MemUtilization)
+	}
+
+	// Efficiency = (0.375 * cpuCostPerHour + 0.375 * memCostPerHour) / totalCostPerHour
+	// Since both utilizations are the same, efficiency should be 0.375
+	if !approxEqual(agg.EfficiencyScore, 0.375, 0.001) {
+		t.Errorf("EfficiencyScore = %f, want 0.375", agg.EfficiencyScore)
+	}
+
+	// WastedCostPerHour = costPerHour * (1 - 0.375) = costPerHour * 0.625
+	expectedWaste := agg.CostPerHour * 0.625
+	if !approxEqual(agg.WastedCostPerHour, expectedWaste, 0.0001) {
+		t.Errorf("WastedCostPerHour = %f, want %f", agg.WastedCostPerHour, expectedWaste)
+	}
+}
+
+func TestAggregateWithUtilizationCostWeighted(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	// Pod with expensive CPU and cheap memory
+	labels := map[string]string{"team": "ml", "app": "training"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("train-1", "ml", 4000, 1000, startTime, false, labels), // 4 vCPU, 1 GB
+	}
+
+	// UnitPrice for CPU is per-mCPU — FromPrices multiplies by 1000 → per-vCPU
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	// High CPU utilization (90%), low memory utilization (10%)
+	usage := map[prometheus.PodKey]prometheus.PodUsage{
+		{Namespace: "ml", Pod: "train-1"}: {CPUCores: 3.6, MemoryBytes: 100_000_000},
+	}
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, usage)
+
+	agg := aggs[0]
+
+	// CPU: 3.6 / 4.0 = 0.9
+	if !approxEqual(agg.CPUUtilization, 0.9, 0.001) {
+		t.Errorf("CPUUtilization = %f, want 0.9", agg.CPUUtilization)
+	}
+
+	// Memory: 0.1 GB / 1.0 GB = 0.1
+	if !approxEqual(agg.MemUtilization, 0.1, 0.001) {
+		t.Errorf("MemUtilization = %f, want 0.1", agg.MemUtilization)
+	}
+
+	// Efficiency should be weighted towards CPU since it's the dominant cost
+	// After FromPrices conversion: CPU = 0.035/vCPU-hr, Memory = 0.004/GB-hr
+	// CPU cost/hr = 4 * 0.035 = 0.14, Mem cost/hr = 1 * 0.004 = 0.004
+	// efficiency = (0.9 * 0.14 + 0.1 * 0.004) / 0.144 ≈ 0.878
+	cpuCostPerHour := 4.0 * 0.035
+	memCostPerHour := 1.0 * 0.004
+	totalCostPerHour := cpuCostPerHour + memCostPerHour
+	expectedEfficiency := (0.9*cpuCostPerHour + 0.1*memCostPerHour) / totalCostPerHour
+
+	if !approxEqual(agg.EfficiencyScore, expectedEfficiency, 0.001) {
+		t.Errorf("EfficiencyScore = %f, want %f", agg.EfficiencyScore, expectedEfficiency)
+	}
+
+	// High efficiency since CPU (dominant cost) is well-utilized
+	if agg.EfficiencyScore < 0.8 {
+		t.Errorf("expected high efficiency score for CPU-dominated workload with high CPU util, got %f", agg.EfficiencyScore)
+	}
+}
+
+func TestAggregateWithUtilizationNilUsage(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false, labels),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, nil)
+
+	if len(aggs) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(aggs))
+	}
+
+	agg := aggs[0]
+	if agg.HasUtilization {
+		t.Error("expected HasUtilization = false when usage is nil")
+	}
+	if agg.CPUUtilization != 0 {
+		t.Errorf("CPUUtilization = %f, want 0", agg.CPUUtilization)
+	}
+	if agg.EfficiencyScore != 0 {
+		t.Errorf("EfficiencyScore = %f, want 0", agg.EfficiencyScore)
+	}
+}
+
+func TestAggregateWithUtilizationPartialPods(t *testing.T) {
+	// Only one of two pods has usage data
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "default", 1000, 1000, startTime, false, labels),
+		kube.NewTestPodInfo("web-2", "default", 1000, 1000, startTime, false, labels),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	// Only web-1 has usage data
+	usage := map[prometheus.PodKey]prometheus.PodUsage{
+		{Namespace: "default", Pod: "web-1"}: {CPUCores: 0.5, MemoryBytes: 500_000_000},
+	}
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, usage)
+
+	agg := aggs[0]
+	if !agg.HasUtilization {
+		t.Fatal("expected HasUtilization = true")
+	}
+
+	// CPU: used = 0.5 (only web-1), requested = 2.0 (both pods) → 0.25
+	if !approxEqual(agg.CPUUtilization, 0.25, 0.001) {
+		t.Errorf("CPUUtilization = %f, want 0.25", agg.CPUUtilization)
+	}
+}
+
+func TestAggregateWithUtilizationCPUBurst(t *testing.T) {
+	// CPU utilization > 1.0 (burst) — efficiency should still cap at 1.0
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "default", 1000, 1000, startTime, false, labels),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	usage := map[prometheus.PodKey]prometheus.PodUsage{
+		{Namespace: "default", Pod: "web-1"}: {CPUCores: 1.5, MemoryBytes: 1_000_000_000}, // 150% CPU, 100% mem
+	}
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, usage)
+
+	agg := aggs[0]
+
+	// Raw CPU utilization should be > 1.0
+	if agg.CPUUtilization <= 1.0 {
+		t.Errorf("CPUUtilization = %f, expected > 1.0 for burst", agg.CPUUtilization)
+	}
+
+	// Efficiency should be capped at 1.0 (no negative waste)
+	if agg.EfficiencyScore > 1.0 {
+		t.Errorf("EfficiencyScore = %f, should be capped at 1.0", agg.EfficiencyScore)
+	}
+
+	// No wasted cost when fully utilized
+	if agg.WastedCostPerHour < 0 {
+		t.Errorf("WastedCostPerHour = %f, should not be negative", agg.WastedCostPerHour)
+	}
+}
+
+func TestAggregateWithUtilizationZeroCost(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	// Pod with zero requests → zero cost
+	labels := map[string]string{"team": "platform", "app": "web"}
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("web-1", "default", 0, 0, now, false, labels),
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	costs := calc.CalculateAll(pods)
+
+	usage := map[prometheus.PodKey]prometheus.PodUsage{
+		{Namespace: "default", Pod: "web-1"}: {CPUCores: 0.1, MemoryBytes: 100_000_000},
+	}
+
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	aggs := AggregateWithUtilization(costs, lc, usage)
+
+	agg := aggs[0]
+	// With zero cost, efficiency should be 0 (avoid division by zero)
+	if agg.EfficiencyScore != 0 {
+		t.Errorf("EfficiencyScore = %f, want 0 for zero cost", agg.EfficiencyScore)
+	}
+	if agg.WastedCostPerHour != 0 {
+		t.Errorf("WastedCostPerHour = %f, want 0 for zero cost", agg.WastedCostPerHour)
 	}
 }

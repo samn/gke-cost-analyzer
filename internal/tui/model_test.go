@@ -30,7 +30,7 @@ func testModel(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
-	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second)
+	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil)
 }
 
 func TestModelInitialView(t *testing.T) {
@@ -283,7 +283,7 @@ func testModelWithSubtype(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app", SubtypeLabel: "subtype"}
-	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second)
+	return NewModel(ctx, cancel, lister, calc, lc, 5*time.Second, nil)
 }
 
 func TestModelHelpTextWithSubtype(t *testing.T) {

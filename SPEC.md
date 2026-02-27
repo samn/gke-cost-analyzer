@@ -38,7 +38,11 @@ interactive table via BubbleTea. Supports interactive column sorting with number
 keys.
 
 Flags: `--interval`, `--region` (required), `--namespace`, `--team-label`,
-`--workload-label`, `--subtype-label`.
+`--workload-label`, `--subtype-label`, `--prometheus-url` (optional).
+
+When `--prometheus-url` is set, additional columns are displayed: CPU%, MEM%,
+and WASTE (wasted cost per hour). Utilization data is fetched from Prometheus
+on each refresh cycle.
 
 ### `record`
 Daemon mode: periodically snapshot pod costs and write aggregated records to
@@ -46,7 +50,12 @@ BigQuery. Runs once immediately on startup, then on a ticker.
 
 Flags: `--interval` (default 5m), `--region` (required), `--project` (required),
 `--cluster-name` (required), `--dataset`, `--table`, `--namespace`,
-`--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally).
+`--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally),
+`--prometheus-url` (optional).
+
+When `--prometheus-url` is set, utilization metrics are fetched from Prometheus
+before each snapshot. If the fetch fails, the snapshot proceeds without
+utilization data (a warning is logged to stderr).
 
 ### `setup`
 Create the BigQuery dataset and table with the correct schema, partitioning,
@@ -63,6 +72,7 @@ Print version, git commit, and build date.
 list of namespaces to exclude from pod listing. When `--namespace` targets a
 specific namespace the exclusion list is effectively a no-op. Set to an empty
 string to include all namespaces.
+`--prometheus-url` (optional Prometheus API base URL for utilization metrics).
 
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
@@ -207,11 +217,57 @@ Aggregated fields are summed across all pods in the group: `PodCount`,
   get `Subtype: ""` and are not differentiated by subtype.
 - **Empty input**: Returns an empty slice (not nil, not an error).
 
-### 5. BigQuery Snapshot Model (`internal/bigquery`)
+### 5. Utilization Metrics (`internal/prometheus`)
 
-Each record is a `CostSnapshot` with 16 fields: timestamp, project_id, region,
+When `--prometheus-url` is set, CPU and memory utilization are fetched from
+Prometheus using instant queries:
+
+- **CPU**: `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))`
+  Returns actual CPU usage in cores per pod.
+- **Memory**: `sum by (namespace, pod) (container_memory_working_set_bytes{container!="",container!="POD"})`
+  Returns actual memory usage in bytes per pod.
+
+Utilization ratios are computed per aggregation group:
+
+```
+cpu_utilization = sum(actual_cpu_cores) / sum(requested_cpu_vcpu)
+mem_utilization = sum(actual_mem_bytes / 1e9) / sum(requested_mem_gb)
+```
+
+**Efficiency score** (cost-weighted utilization, 0–1):
+
+```
+efficiency = (min(cpu_util, 1.0) × cpu_cost_per_hour + min(mem_util, 1.0) × mem_cost_per_hour) / cost_per_hour
+```
+
+CPU utilization is capped at 1.0 for the efficiency calculation — CPU burst
+above 100% still means the requested resources are fully utilized.
+
+**Wasted cost**:
+
+```
+wasted_cost_per_hour = cost_per_hour × (1 - efficiency_score)
+```
+
+#### Edge cases
+- **Prometheus unavailable**: Utilization fields are nil/zero; snapshot proceeds
+  without utilization data (warning logged to stderr).
+- **Partial pod data**: If some pods have no Prometheus metrics, only pods with
+  data contribute to the utilization calculation.
+- **Zero cost**: If `cost_per_hour == 0`, efficiency score is 0 and wasted cost
+  is 0.
+- **CPU burst**: CPU utilization > 100% is valid (burst above requests); capped
+  at 1.0 for the efficiency score to avoid negative wasted cost.
+
+### 6. BigQuery Snapshot Model (`internal/bigquery`)
+
+Each record is a `CostSnapshot` with 20 fields: timestamp, project_id, region,
 cluster_name, namespace, team, workload, subtype, pod_count, cpu_request_vcpu,
-memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds.
+memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds,
+cpu_utilization, memory_utilization, efficiency_score, wasted_cost_per_hour.
+
+The last four fields are NULLABLE FLOAT64 columns — they are only populated
+when `--prometheus-url` is configured and utilization data is available.
 
 **Table configuration**:
 - Partitioned by DAY on `timestamp`

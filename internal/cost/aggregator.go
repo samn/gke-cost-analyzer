@@ -1,5 +1,9 @@
 package cost
 
+import (
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
+)
+
 // LabelConfig specifies which pod labels to use for grouping.
 type LabelConfig struct {
 	TeamLabel     string
@@ -17,20 +21,44 @@ type GroupKey struct {
 
 // AggregatedCost holds aggregated cost metrics for a group of pods.
 type AggregatedCost struct {
-	Key          GroupKey
-	Namespace    string // namespace of the first pod (for reference)
-	PodCount     int
-	TotalCPUVCPU float64
-	TotalMemGB   float64
-	CPUCost      float64
-	MemCost      float64
-	TotalCost    float64
-	CostPerHour  float64
+	Key            GroupKey
+	Namespace      string // namespace of the first pod (for reference)
+	PodCount       int
+	TotalCPUVCPU   float64
+	TotalMemGB     float64
+	CPUCost        float64
+	MemCost        float64
+	TotalCost      float64
+	CostPerHour    float64
+	CPUCostPerHour float64
+	MemCostPerHour float64
+
+	// Utilization fields — populated when Prometheus data is available.
+	// Zero values indicate no utilization data.
+	HasUtilization    bool
+	CPUUtilization    float64 // ratio: actual / requested (0–1+)
+	MemUtilization    float64 // ratio: actual / requested (0–1)
+	EfficiencyScore   float64 // cost-weighted utilization (0–1)
+	WastedCostPerHour float64 // cost_per_hour × (1 - efficiency)
 }
 
 // Aggregate groups pod costs by the configured label hierarchy.
 func Aggregate(costs []PodCost, labels LabelConfig) []AggregatedCost {
-	groups := make(map[GroupKey]*AggregatedCost)
+	return AggregateWithUtilization(costs, labels, nil)
+}
+
+// AggregateWithUtilization groups pod costs by the configured label hierarchy
+// and enriches each group with utilization metrics from Prometheus.
+// If usage is nil, utilization fields are left at zero.
+func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[prometheus.PodKey]prometheus.PodUsage) []AggregatedCost {
+	type groupAccum struct {
+		agg          AggregatedCost
+		totalCPUUsed float64 // sum of CPU cores used across pods in group
+		totalMemUsed float64 // sum of memory bytes used across pods in group
+		hasUsage     bool
+	}
+
+	groups := make(map[GroupKey]*groupAccum)
 
 	for _, pc := range costs {
 		key := GroupKey{
@@ -40,29 +68,69 @@ func Aggregate(costs []PodCost, labels LabelConfig) []AggregatedCost {
 			IsSpot:   pc.Pod.IsSpot,
 		}
 
-		agg, ok := groups[key]
+		ga, ok := groups[key]
 		if !ok {
-			agg = &AggregatedCost{
-				Key:       key,
-				Namespace: pc.Pod.Namespace,
+			ga = &groupAccum{
+				agg: AggregatedCost{
+					Key:       key,
+					Namespace: pc.Pod.Namespace,
+				},
 			}
-			groups[key] = agg
+			groups[key] = ga
 		}
 
-		agg.PodCount++
-		agg.TotalCPUVCPU += pc.Pod.CPURequestVCPU
-		agg.TotalMemGB += pc.Pod.MemRequestGB
-		agg.CPUCost += pc.CPUCost
-		agg.MemCost += pc.MemCost
-		agg.TotalCost += pc.TotalCost
-		agg.CostPerHour += pc.CostPerHour
+		ga.agg.PodCount++
+		ga.agg.TotalCPUVCPU += pc.Pod.CPURequestVCPU
+		ga.agg.TotalMemGB += pc.Pod.MemRequestGB
+		ga.agg.CPUCost += pc.CPUCost
+		ga.agg.MemCost += pc.MemCost
+		ga.agg.TotalCost += pc.TotalCost
+		ga.agg.CostPerHour += pc.CostPerHour
+		ga.agg.CPUCostPerHour += pc.CPUCostPerHour
+		ga.agg.MemCostPerHour += pc.MemCostPerHour
+
+		if usage != nil {
+			podKey := prometheus.PodKey{Namespace: pc.Pod.Namespace, Pod: pc.Pod.Name}
+			if u, found := usage[podKey]; found {
+				ga.totalCPUUsed += u.CPUCores
+				ga.totalMemUsed += u.MemoryBytes / 1e9 // convert bytes → GB (SI)
+				ga.hasUsage = true
+			}
+		}
 	}
 
 	result := make([]AggregatedCost, 0, len(groups))
-	for _, agg := range groups {
-		result = append(result, *agg)
+	for _, ga := range groups {
+		if ga.hasUsage {
+			ga.agg.HasUtilization = true
+			if ga.agg.TotalCPUVCPU > 0 {
+				ga.agg.CPUUtilization = ga.totalCPUUsed / ga.agg.TotalCPUVCPU
+			}
+			if ga.agg.TotalMemGB > 0 {
+				ga.agg.MemUtilization = ga.totalMemUsed / ga.agg.TotalMemGB
+			}
+			ga.agg.EfficiencyScore = computeEfficiency(
+				ga.agg.CPUUtilization, ga.agg.MemUtilization,
+				ga.agg.CPUCostPerHour, ga.agg.MemCostPerHour, ga.agg.CostPerHour,
+			)
+			ga.agg.WastedCostPerHour = ga.agg.CostPerHour * (1 - ga.agg.EfficiencyScore)
+		}
+		result = append(result, ga.agg)
 	}
 	return result
+}
+
+// computeEfficiency returns a cost-weighted utilization score (0–1).
+// CPU utilization is capped at 1.0 for the score so burst doesn't produce
+// negative waste values.
+func computeEfficiency(cpuUtil, memUtil, cpuCostPerHour, memCostPerHour, totalCostPerHour float64) float64 {
+	if totalCostPerHour <= 0 {
+		return 0
+	}
+	// Cap utilization at 1.0 for efficiency calculation
+	cpuCapped := min(cpuUtil, 1.0)
+	memCapped := min(memUtil, 1.0)
+	return (cpuCapped*cpuCostPerHour + memCapped*memCostPerHour) / totalCostPerHour
 }
 
 func labelValue(labels map[string]string, key string) string {

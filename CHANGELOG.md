@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `--exclude-namespaces` flag to filter out system namespaces (default: `kube-system,gmp-system`), preventing GKE platform pods from polluting cost attribution
+- Prometheus-based utilization metrics: `--prometheus-url` global flag fetches CPU and memory utilization from Prometheus to compute per-workload efficiency scores
+- Cost-weighted efficiency score: `efficiency = (cpu_util × cpu_cost + mem_util × mem_cost) / total_cost` identifies workloads with the highest optimization potential
+- Wasted cost metric: `wasted_cost_per_hour = cost_per_hour × (1 - efficiency)` quantifies the cost of underutilized resources
+- `watch` command: CPU%, MEM%, and WASTE columns displayed when `--prometheus-url` is set, with interactive sorting (keys 8/9 or 9/0 depending on column layout)
+- `record` command: utilization data (cpu_utilization, memory_utilization, efficiency_score, wasted_cost_per_hour) included in BigQuery and Parquet snapshots when Prometheus is configured
+- BigQuery schema: 4 new NULLABLE FLOAT64 columns for utilization metrics
+- `internal/prometheus` package: Prometheus HTTP API client for fetching container CPU/memory usage via PromQL instant queries
 - `record` command: `--output-file` flag to append `--dry-run` snapshots to a local Parquet file (same schema as BigQuery table)
 - Auto-detect `--region`, `--project`, and `--cluster-name` from GCE metadata server (GKE) and kubeconfig context (development); explicit CLI flags always take priority
 - Test coverage improvements across all packages (bigquery 84%→89%, kube 72%→76%, pricing 84%→86%)

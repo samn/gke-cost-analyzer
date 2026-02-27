@@ -4,12 +4,14 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
+	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 )
 
 // PodLister abstracts Kubernetes pod listing for testability.
@@ -36,28 +38,32 @@ type Model struct {
 	err        error
 	lastUpdate time.Time
 
-	sortCfg     SortConfig
-	showSubtype bool
+	sortCfg         SortConfig
+	showSubtype     bool
+	showUtilization bool
 
-	lister   PodLister
-	calc     *cost.Calculator
-	lc       cost.LabelConfig
-	interval time.Duration
-	ctx      context.Context
-	cancel   context.CancelFunc
+	lister     PodLister
+	calc       *cost.Calculator
+	lc         cost.LabelConfig
+	interval   time.Duration
+	ctx        context.Context
+	cancel     context.CancelFunc
+	promClient *prometheus.Client
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, calc *cost.Calculator, lc cost.LabelConfig, interval time.Duration) Model {
+func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, calc *cost.Calculator, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client) Model {
 	return Model{
-		lister:      lister,
-		calc:        calc,
-		lc:          lc,
-		interval:    interval,
-		ctx:         ctx,
-		cancel:      cancel,
-		sortCfg:     DefaultSort(),
-		showSubtype: lc.SubtypeLabel != "",
+		lister:          lister,
+		calc:            calc,
+		lc:              lc,
+		interval:        interval,
+		ctx:             ctx,
+		cancel:          cancel,
+		sortCfg:         DefaultSort(),
+		showSubtype:     lc.SubtypeLabel != "",
+		showUtilization: promClient != nil,
+		promClient:      promClient,
 	}
 }
 
@@ -74,9 +80,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8":
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 			key := rune(msg.String()[0])
-			if col, ok := ColumnForKey(key, m.showSubtype); ok {
+			if col, ok := ColumnForKey(key, m.showSubtype, m.showUtilization); ok {
 				if col == m.sortCfg.Column {
 					m.sortCfg.Asc = !m.sortCfg.Asc
 				} else {
@@ -124,7 +130,7 @@ func (m Model) View() string {
 
 	help := m.helpText()
 
-	return header + "\n\n" + RenderTable(sorted, m.showSubtype, m.sortCfg) + "\n\n" + help + "\n"
+	return header + "\n\n" + RenderTable(sorted, m.showSubtype, m.showUtilization, m.sortCfg) + "\n\n" + help + "\n"
 }
 
 // fetchCosts fetches pod data and calculates costs.
@@ -134,16 +140,31 @@ func (m Model) fetchCosts() tea.Msg {
 		return errMsg{fmt.Errorf("listing pods: %w", err)}
 	}
 
+	var usage map[prometheus.PodKey]prometheus.PodUsage
+	if m.promClient != nil {
+		usage, err = m.promClient.FetchUsage(m.ctx)
+		if err != nil {
+			// Log warning but continue without utilization data
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch utilization metrics: %v\n", err)
+		}
+	}
+
 	costs := m.calc.CalculateAll(pods)
-	aggs := cost.Aggregate(costs, m.lc)
+	aggs := cost.AggregateWithUtilization(costs, m.lc, usage)
 
 	return costDataMsg{aggs: aggs, podCount: len(pods)}
 }
 
 // helpText returns the footer help line showing sort key mappings.
 func (m Model) helpText() string {
+	if m.showSubtype && m.showUtilization {
+		return "Sort: 1=Team 2=Workload 3=Subtype 4=Pods 5=CPU 6=Mem 7=$/hr 8=Cost 9=CPU% 0=Waste · q=Quit"
+	}
 	if m.showSubtype {
 		return "Sort: 1=Team 2=Workload 3=Subtype 4=Pods 5=CPU 6=Mem 7=$/hr 8=Cost · q=Quit"
+	}
+	if m.showUtilization {
+		return "Sort: 1=Team 2=Workload 3=Pods 4=CPU 5=Mem 6=$/hr 7=Cost 8=CPU% 9=Waste · q=Quit"
 	}
 	return "Sort: 1=Team 2=Workload 3=Pods 4=CPU 5=Mem 6=$/hr 7=Cost · q=Quit"
 }
