@@ -293,7 +293,7 @@ func TestInstantQuerySendsCorrectPromQL(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL)
-	_, err := client.instantQuery(context.Background(), "test_query{foo=\"bar\"}")
+	_, err := client.instantQuery(context.Background(), "test_query{foo=\"bar\"}", "namespace", "pod")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -316,6 +316,144 @@ func TestGMPBaseURL(t *testing.T) {
 	want := "https://monitoring.googleapis.com/v1/projects/my-project/location/global/prometheus"
 	if got != want {
 		t.Errorf("GMPBaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestWithGMPSystemMetrics(t *testing.T) {
+	client := NewClient("http://example.com", WithGMPSystemMetrics())
+	if !client.gmpSystemMetrics {
+		t.Error("gmpSystemMetrics should be true")
+	}
+}
+
+func TestFetchUsageGMPSystemMetrics(t *testing.T) {
+	var receivedQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+		receivedQueries = append(receivedQueries, query)
+		w.Header().Set("Content-Type", "application/json")
+
+		var resp promResponse
+		if strings.Contains(query, "core_usage_time") {
+			resp = promResponse{
+				Status: "success",
+				Data: promData{
+					ResultType: "vector",
+					Result: []promResult{
+						{
+							Metric: map[string]string{"namespace_name": "default", "pod_name": "web-1"},
+							Value:  []any{1234567890.0, "0.25"},
+						},
+					},
+				},
+			}
+		} else {
+			resp = promResponse{
+				Status: "success",
+				Data: promData{
+					ResultType: "vector",
+					Result: []promResult{
+						{
+							Metric: map[string]string{"namespace_name": "default", "pod_name": "web-1"},
+							Value:  []any{1234567890.0, "268435456"},
+						},
+					},
+				},
+			}
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, WithGMPSystemMetrics())
+	usage, err := client.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(usage) != 1 {
+		t.Fatalf("expected 1 pod, got %d", len(usage))
+	}
+
+	// Verify GMP system metric queries were sent
+	if len(receivedQueries) != 2 {
+		t.Fatalf("expected 2 queries, got %d", len(receivedQueries))
+	}
+	if !strings.Contains(receivedQueries[0], "kubernetes_io:container_cpu_core_usage_time") {
+		t.Errorf("CPU query should use GMP system metric name, got: %s", receivedQueries[0])
+	}
+	if !strings.Contains(receivedQueries[1], "kubernetes_io:container_memory_used_bytes") {
+		t.Errorf("memory query should use GMP system metric name, got: %s", receivedQueries[1])
+	}
+
+	// Verify results are keyed by namespace_name/pod_name labels
+	web1 := usage[PodKey{Namespace: "default", Pod: "web-1"}]
+	if web1.CPUCores != 0.25 {
+		t.Errorf("web-1 CPU = %f, want 0.25", web1.CPUCores)
+	}
+	if web1.MemoryBytes != 268435456 {
+		t.Errorf("web-1 memory = %f, want 268435456", web1.MemoryBytes)
+	}
+}
+
+func TestFetchUsageGMPIgnoresStandardLabels(t *testing.T) {
+	// In GMP mode, results with standard "namespace"/"pod" labels should be
+	// skipped because GMP system metrics use "namespace_name"/"pod_name".
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(promResponse{
+			Status: "success",
+			Data: promData{
+				ResultType: "vector",
+				Result: []promResult{
+					{
+						Metric: map[string]string{"namespace": "default", "pod": "web-1"},
+						Value:  []any{1234567890.0, "0.25"},
+					},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, WithGMPSystemMetrics())
+	usage, err := client.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should be empty because GMP mode looks for namespace_name/pod_name
+	if len(usage) != 0 {
+		t.Errorf("expected 0 pods (wrong labels for GMP mode), got %d", len(usage))
+	}
+}
+
+func TestFetchUsageStandardModeUsesCorrectQueries(t *testing.T) {
+	var receivedQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedQueries = append(receivedQueries, r.URL.Query().Get("query"))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(promResponse{
+			Status: "success",
+			Data:   promData{ResultType: "vector", Result: []promResult{}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL) // No GMP option = standard mode
+	_, err := client.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(receivedQueries) != 2 {
+		t.Fatalf("expected 2 queries, got %d", len(receivedQueries))
+	}
+	if !strings.Contains(receivedQueries[0], "container_cpu_usage_seconds_total") {
+		t.Errorf("CPU query should use standard metric name, got: %s", receivedQueries[0])
+	}
+	if !strings.Contains(receivedQueries[1], "container_memory_working_set_bytes") {
+		t.Errorf("memory query should use standard metric name, got: %s", receivedQueries[1])
 	}
 }
 

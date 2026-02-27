@@ -243,7 +243,23 @@ the `https://www.googleapis.com/auth/monitoring.read` OAuth2 scope.
 A custom `--prometheus-url` can be specified to query a self-hosted Prometheus
 instance instead (no GCP auth is applied for custom URLs).
 
-CPU and memory utilization are fetched using instant queries:
+CPU and memory utilization are fetched using instant queries. The client
+supports two query modes:
+
+**GMP system metrics** (default when using GMP with auto-detected project):
+Uses GKE system metrics that are automatically collected without requiring
+managed Prometheus collection. Metric names follow the Cloud Monitoring →
+PromQL naming convention (first `/` → `:`, remaining special chars → `_`).
+
+- **CPU**: `sum by (namespace_name, pod_name) (rate(kubernetes_io:container_cpu_core_usage_time[5m]))`
+  Returns actual CPU usage in cores per pod.
+- **Memory**: `sum by (namespace_name, pod_name) (kubernetes_io:container_memory_used_bytes{memory_type="non-evictable"})`
+  Returns non-evictable memory usage in bytes per pod (closest equivalent to
+  working set).
+
+**Standard Prometheus** (when `--prometheus-url` is set):
+Uses standard cAdvisor/kubelet metric names for self-hosted Prometheus or GMP
+with managed collection enabled.
 
 - **CPU**: `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))`
   Returns actual CPU usage in cores per pod.

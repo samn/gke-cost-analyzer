@@ -105,5 +105,5 @@ func newPromClient(ctx context.Context) (*prometheus.Client, error) {
 	}
 
 	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", project)
-	return prometheus.NewClient(gmpURL, prometheus.WithHTTPClient(httpClient)), nil
+	return prometheus.NewClient(gmpURL, prometheus.WithHTTPClient(httpClient), prometheus.WithGMPSystemMetrics()), nil
 }

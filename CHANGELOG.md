@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `--project` is now a global persistent flag shared by all commands (`watch`, `record`, `setup`) instead of a local flag on `record` and `setup`; the `watch` command can now use `--project` to explicitly set the GCP project for Prometheus/GMP queries
+- GMP utilization queries now use GKE system metrics (`kubernetes_io:container_cpu_core_usage_time`, `kubernetes_io:container_memory_used_bytes`) which are automatically collected by GKE without requiring managed Prometheus collection to be enabled; `--prometheus-url` still uses standard Prometheus metric names
 
 ### Added
 - `--exclude-namespaces` flag to filter out system namespaces (default: `kube-system,gmp-system`), preventing GKE platform pods from polluting cost attribution
