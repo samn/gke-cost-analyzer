@@ -344,7 +344,9 @@ func TestRecordSnapshotEmptyPods(t *testing.T) {
 
 	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("closing pipe writer: %v", err)
+	}
 	os.Stdout = oldStdout
 
 	if err != nil {
@@ -352,7 +354,9 @@ func TestRecordSnapshotEmptyPods(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	buf.ReadFrom(r)
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("reading captured output: %v", err)
+	}
 	output := buf.String()
 
 	if !strings.Contains(output, "Would write 0 records (0 pods)") {
