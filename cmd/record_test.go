@@ -14,6 +14,7 @@ import (
 	"github.com/samn/autopilot-cost-analyzer/internal/bigquery"
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
+	pqwriter "github.com/samn/autopilot-cost-analyzer/internal/parquet"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
 )
 
@@ -153,7 +154,7 @@ func TestRecordSnapshot(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestRecordSnapshotDryRun(t *testing.T) {
 	os.Stdout = w
 
 	// Pass nil writer for dry-run
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, "")
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("closing pipe writer: %v", err)
@@ -242,7 +243,7 @@ func TestRecordSnapshotListError(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl")
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
 	if err == nil {
 		t.Fatal("expected error from list failure")
 	}
@@ -342,7 +343,7 @@ func TestRecordSnapshotEmptyPods(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, "")
 
 	if err := w.Close(); err != nil {
 		t.Fatalf("closing pipe writer: %v", err)
@@ -401,7 +402,7 @@ func TestRecordSnapshotMultipleGroups(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -439,7 +440,7 @@ func TestRecordSnapshotWriteError(t *testing.T) {
 	writer := bigquery.NewWriter("proj", "ds", "tbl", bigquery.WithWriterBaseURL(srv.URL))
 	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
 
-	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300)
+	err := recordSnapshot(context.Background(), lister, calc, lc, writer, sc, 300, "")
 	if err == nil {
 		t.Fatal("expected error from BigQuery write failure")
 	}
@@ -495,5 +496,130 @@ func TestRecordRejectsZeroInterval(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--interval") {
 		t.Errorf("error should mention --interval, got: %v", err)
+	}
+}
+
+func TestRecordOutputFileRequiresDryRun(t *testing.T) {
+	saved := region
+	savedProject := bqProject
+	savedCluster := clusterName
+	savedInterval := recordInterval
+	savedDryRun := dryRun
+	savedOutputFile := outputFile
+	defer func() {
+		region = saved
+		bqProject = savedProject
+		clusterName = savedCluster
+		recordInterval = savedInterval
+		dryRun = savedDryRun
+		outputFile = savedOutputFile
+	}()
+	region = "us-central1"
+	bqProject = "proj"
+	clusterName = "cluster"
+	recordInterval = 5 * time.Minute
+	dryRun = false
+	outputFile = "/tmp/test.parquet"
+
+	err := runRecord(rootCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when --output-file used without --dry-run")
+	}
+	if !strings.Contains(err.Error(), "--output-file requires --dry-run") {
+		t.Errorf("error should mention --output-file requires --dry-run, got: %v", err)
+	}
+}
+
+func TestRecordSnapshotParquetOutput(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+			kube.NewTestPodInfo("web-2", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+		},
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	dir := t.TempDir()
+	pqFile := dir + "/snapshots.parquet"
+
+	// Pass nil writer (dry-run) with parquet file
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read back and verify
+	got, err := pqwriter.ReadFile(pqFile)
+	if err != nil {
+		t.Fatalf("reading parquet: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(got))
+	}
+	if got[0].Team != "platform" {
+		t.Errorf("team = %s, want platform", got[0].Team)
+	}
+	if got[0].Workload != "web" {
+		t.Errorf("workload = %s, want web", got[0].Workload)
+	}
+	if got[0].PodCount != 2 {
+		t.Errorf("pod_count = %d, want 2", got[0].PodCount)
+	}
+}
+
+func TestRecordSnapshotParquetAppends(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			kube.NewTestPodInfo("web-1", "default", 500, 512, startTime, false,
+				map[string]string{"team": "platform", "app": "web"}),
+		},
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+		{Region: "us-central1", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+
+	calc := cost.NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	sc := snapshotConfig{projectID: "proj", region: "us-central1", clusterName: "cluster"}
+
+	dir := t.TempDir()
+	pqFile := dir + "/snapshots.parquet"
+
+	// First snapshot
+	err := recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	if err != nil {
+		t.Fatalf("first snapshot: %v", err)
+	}
+
+	// Second snapshot
+	err = recordSnapshot(context.Background(), lister, calc, lc, nil, sc, 300, pqFile)
+	if err != nil {
+		t.Fatalf("second snapshot: %v", err)
+	}
+
+	got, err := pqwriter.ReadFile(pqFile)
+	if err != nil {
+		t.Fatalf("reading parquet: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rows after two appends, got %d", len(got))
 	}
 }

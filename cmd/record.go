@@ -11,6 +11,7 @@ import (
 
 	"github.com/samn/autopilot-cost-analyzer/internal/bigquery"
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
+	pqwriter "github.com/samn/autopilot-cost-analyzer/internal/parquet"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
@@ -24,6 +25,7 @@ var (
 	bqTable        string
 	clusterName    string
 	dryRun         bool
+	outputFile     string
 )
 
 func init() {
@@ -33,6 +35,7 @@ func init() {
 	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
 	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (auto-detected from environment)")
 	recordCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Log rows that would be written without writing to BigQuery")
+	recordCmd.Flags().StringVar(&outputFile, "output-file", "", "Append dry-run snapshots to a local Parquet file (requires --dry-run)")
 	rootCmd.AddCommand(recordCmd)
 }
 
@@ -56,6 +59,9 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	if recordInterval <= 0 {
 		return fmt.Errorf("--interval must be positive")
 	}
+	if outputFile != "" && !dryRun {
+		return fmt.Errorf("--output-file requires --dry-run")
+	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
@@ -75,7 +81,11 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 
 	var writer *bigquery.Writer
 	if dryRun {
-		fmt.Println("Dry-run mode: rows will be logged to stdout, not written to BigQuery")
+		if outputFile != "" {
+			fmt.Printf("Dry-run mode: appending rows to %s\n", outputFile)
+		} else {
+			fmt.Println("Dry-run mode: rows will be logged to stdout, not written to BigQuery")
+		}
 	} else {
 		// Create authenticated HTTP client for BigQuery
 		httpClient, err := authHTTPClient(ctx)
@@ -101,7 +111,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	defer ticker.Stop()
 
 	// Run once immediately
-	if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs); err != nil {
+	if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
@@ -111,7 +121,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs); err != nil {
+			if err := recordSnapshot(ctx, lister, calc, lc, writer, sc, intervalSecs, outputFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
 			}
 		}
@@ -125,7 +135,7 @@ type snapshotConfig struct {
 	clusterName string
 }
 
-func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64) error {
+func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
 	// Capture timestamp before listing pods so it reflects the start of the
 	// snapshot window, not the end of processing.
 	now := time.Now()
@@ -144,15 +154,23 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 	}
 
 	if writer == nil {
-		for _, s := range snapshots {
-			data, err := json.Marshal(s)
-			if err != nil {
-				return fmt.Errorf("marshaling snapshot: %w", err)
+		if parquetFile != "" {
+			if err := pqwriter.AppendToFile(parquetFile, snapshots); err != nil {
+				return fmt.Errorf("writing to parquet: %w", err)
 			}
-			fmt.Println(string(data))
+			fmt.Printf("[%s] Appended %d records (%d pods) to %s\n",
+				now.Format("15:04:05"), len(snapshots), len(pods), parquetFile)
+		} else {
+			for _, s := range snapshots {
+				data, err := json.Marshal(s)
+				if err != nil {
+					return fmt.Errorf("marshaling snapshot: %w", err)
+				}
+				fmt.Println(string(data))
+			}
+			fmt.Printf("[%s] Would write %d records (%d pods)\n",
+				now.Format("15:04:05"), len(snapshots), len(pods))
 		}
-		fmt.Printf("[%s] Would write %d records (%d pods)\n",
-			now.Format("15:04:05"), len(snapshots), len(pods))
 		return nil
 	}
 
