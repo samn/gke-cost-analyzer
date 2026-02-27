@@ -21,6 +21,11 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// Version returns the build version string.
+func Version() string {
+	return version
+}
+
 func init() {
 	rootCmd.AddCommand(versionCmd)
 }
