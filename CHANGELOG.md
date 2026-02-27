@@ -7,15 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Auto-detect `--region`, `--project`, and `--cluster-name` from GCE metadata server (GKE) and kubeconfig context (development); explicit CLI flags always take priority
+- Test coverage improvements across all packages (bigquery 84%→89%, kube 72%→76%, pricing 84%→86%)
+
 ### Fixed
 - BigQuery InsertID now includes Subtype field, preventing silent deduplication of rows that differ only by subtype
 - `record` command: snapshot timestamp is now captured before pod listing to accurately reflect the snapshot window start
-
-### Added
-- Test coverage improvements across all packages (bigquery 84%→89%, kube 72%→76%, pricing 84%→86%)
-
-### Previous
-
 - `record` command: `--dry-run` flag to log rows without writing to BigQuery
 - `watch` command: SUBTYPE column is now hidden when --subtype-label is not set
 - Filter out non-Autopilot pods by requiring node names with `gk3-` prefix

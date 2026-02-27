@@ -28,10 +28,10 @@ var (
 
 func init() {
 	recordCmd.Flags().DurationVar(&recordInterval, "interval", 5*time.Minute, "Snapshot interval")
-	recordCmd.Flags().StringVar(&bqProject, "project", "", "GCP project ID for BigQuery (required)")
+	recordCmd.Flags().StringVar(&bqProject, "project", "", "GCP project ID for BigQuery (auto-detected from environment)")
 	recordCmd.Flags().StringVar(&bqDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
-	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (required)")
+	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (auto-detected from environment)")
 	recordCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Log rows that would be written without writing to BigQuery")
 	rootCmd.AddCommand(recordCmd)
 }

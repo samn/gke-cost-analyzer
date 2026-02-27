@@ -15,7 +15,7 @@ var (
 )
 
 func init() {
-	setupCmd.Flags().StringVar(&setupProject, "project", "", "GCP project ID (required)")
+	setupCmd.Flags().StringVar(&setupProject, "project", "", "GCP project ID (auto-detected from environment)")
 	setupCmd.Flags().StringVar(&setupDataset, "dataset", "autopilot_costs", "BigQuery dataset name")
 	setupCmd.Flags().StringVar(&setupTable, "table", "cost_snapshots", "BigQuery table name")
 	setupCmd.Flags().StringVar(&setupLocation, "location", "US", "BigQuery dataset location")
