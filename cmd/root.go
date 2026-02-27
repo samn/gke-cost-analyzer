@@ -41,7 +41,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", "", "Kubernetes namespace to filter (empty = all)")
 	rootCmd.PersistentFlags().StringVar(&region, "region", "", "GCP region for pricing (auto-detected from environment)")
 	rootCmd.PersistentFlags().StringSliceVar(&excludeNamespaces, "exclude-namespaces", []string{"kube-system", "gmp-system"}, "Namespaces to exclude from pod listing (comma-separated)")
-	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL for utilization metrics (optional)")
+	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)")
 }
 
 // applyDefaults fills in missing flag values from environment detection.

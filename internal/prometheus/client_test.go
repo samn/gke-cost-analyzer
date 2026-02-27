@@ -310,3 +310,38 @@ func TestWithHTTPClient(t *testing.T) {
 		t.Error("custom HTTP client not set")
 	}
 }
+
+func TestGMPBaseURL(t *testing.T) {
+	got := GMPBaseURL("my-project")
+	want := "https://monitoring.googleapis.com/v1/projects/my-project/location/global/prometheus"
+	if got != want {
+		t.Errorf("GMPBaseURL = %q, want %q", got, want)
+	}
+}
+
+func TestGMPBaseURLUsedByClient(t *testing.T) {
+	// Verify that a client created with the GMP base URL appends the correct
+	// /api/v1/query path when making queries.
+	var requestedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(promResponse{
+			Status: "success",
+			Data:   promData{ResultType: "vector", Result: []promResult{}},
+		})
+	}))
+	defer srv.Close()
+
+	// Simulate GMP-like base URL structure
+	client := NewClient(srv.URL + "/v1/projects/my-project/location/global/prometheus")
+	_, err := client.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantPath := "/v1/projects/my-project/location/global/prometheus/api/v1/query"
+	if requestedPath != wantPath {
+		t.Errorf("request path = %q, want %q", requestedPath, wantPath)
+	}
+}

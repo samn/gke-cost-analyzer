@@ -12,6 +12,12 @@ import (
 	"strconv"
 )
 
+// GMPBaseURL returns the Google Cloud Managed Prometheus query API base URL
+// for the given project ID.
+func GMPBaseURL(projectID string) string {
+	return fmt.Sprintf("https://monitoring.googleapis.com/v1/projects/%s/location/global/prometheus", projectID)
+}
+
 // PodKey identifies a pod by namespace and name.
 type PodKey struct {
 	Namespace string

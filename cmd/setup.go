@@ -36,7 +36,7 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 
 	ctx := cmd.Context()
 
-	httpClient, err := authHTTPClient(ctx)
+	httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/bigquery")
 	if err != nil {
 		return fmt.Errorf("creating authenticated client: %w", err)
 	}

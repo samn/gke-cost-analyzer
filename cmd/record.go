@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"time"
@@ -15,8 +14,6 @@ import (
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
 	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 )
 
 var (
@@ -80,10 +77,9 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
-	var promClient *prometheus.Client
-	if prometheusURL != "" {
-		promClient = prometheus.NewClient(prometheusURL)
-		fmt.Printf("Fetching utilization metrics from %s\n", prometheusURL)
+	promClient, err := newPromClient(ctx)
+	if err != nil {
+		return err
 	}
 
 	var writer *bigquery.Writer
@@ -95,7 +91,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		}
 	} else {
 		// Create authenticated HTTP client for BigQuery
-		httpClient, err := authHTTPClient(ctx)
+		httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/bigquery")
 		if err != nil {
 			return fmt.Errorf("creating authenticated client: %w", err)
 		}
@@ -226,12 +222,4 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		snap.WastedCostPerHour = &a.WastedCostPerHour
 	}
 	return snap
-}
-
-func authHTTPClient(ctx context.Context) (*http.Client, error) {
-	ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/bigquery")
-	if err != nil {
-		return nil, fmt.Errorf("getting default credentials: %w", err)
-	}
-	return oauth2.NewClient(ctx, ts), nil
 }

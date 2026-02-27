@@ -40,9 +40,10 @@ keys.
 Flags: `--interval`, `--region` (required), `--namespace`, `--team-label`,
 `--workload-label`, `--subtype-label`, `--prometheus-url` (optional).
 
-When `--prometheus-url` is set, additional columns are displayed: CPU%, MEM%,
-and WASTE (wasted cost per hour). Utilization data is fetched from Prometheus
-on each refresh cycle.
+Utilization columns (CPU%, MEM%, WASTE) are automatically displayed when a
+Prometheus source is available — either GCP Managed Prometheus (default when
+project is detected) or a custom `--prometheus-url`. Utilization data is
+fetched on each refresh cycle.
 
 ### `record`
 Daemon mode: periodically snapshot pod costs and write aggregated records to
@@ -53,9 +54,10 @@ Flags: `--interval` (default 5m), `--region` (required), `--project` (required),
 `--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally),
 `--prometheus-url` (optional).
 
-When `--prometheus-url` is set, utilization metrics are fetched from Prometheus
-before each snapshot. If the fetch fails, the snapshot proceeds without
-utilization data (a warning is logged to stderr).
+Utilization metrics are automatically fetched from GCP Managed Prometheus
+(default when project is detected) or a custom `--prometheus-url` before each
+snapshot. If the fetch fails, the snapshot proceeds without utilization data (a
+warning is logged to stderr).
 
 ### `setup`
 Create the BigQuery dataset and table with the correct schema, partitioning,
@@ -72,11 +74,20 @@ Print version, git commit, and build date.
 list of namespaces to exclude from pod listing. When `--namespace` targets a
 specific namespace the exclusion list is effectively a no-op. Set to an empty
 string to include all namespaces.
-`--prometheus-url` (optional Prometheus API base URL for utilization metrics).
+`--prometheus-url` (override Prometheus API base URL; defaults to GCP Managed
+Prometheus when a project ID is available).
 
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
 current kubeconfig context. Explicit CLI flags always take priority.
+
+**Prometheus auto-detection**: When `--prometheus-url` is not set and a GCP
+project ID is available (via `--project` or auto-detected), utilization metrics
+are automatically fetched from Google Cloud Managed Service for Prometheus (GMP)
+at `https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`.
+The request is authenticated using Application Default Credentials with the
+`monitoring.read` scope. Set `--prometheus-url` to a custom URL to use a
+self-hosted Prometheus instead.
 
 ## Core Data Collection Pipeline
 
@@ -219,8 +230,18 @@ Aggregated fields are summed across all pods in the group: `PodCount`,
 
 ### 5. Utilization Metrics (`internal/prometheus`)
 
-When `--prometheus-url` is set, CPU and memory utilization are fetched from
-Prometheus using instant queries:
+By default, utilization metrics are fetched from **Google Cloud Managed Service
+for Prometheus (GMP)** when a GCP project ID is available. The GMP query
+endpoint is:
+`https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`
+
+Requests to GMP are authenticated using Application Default Credentials with
+the `https://www.googleapis.com/auth/monitoring.read` OAuth2 scope.
+
+A custom `--prometheus-url` can be specified to query a self-hosted Prometheus
+instance instead (no GCP auth is applied for custom URLs).
+
+CPU and memory utilization are fetched using instant queries:
 
 - **CPU**: `sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",container!="POD"}[5m]))`
   Returns actual CPU usage in cores per pod.

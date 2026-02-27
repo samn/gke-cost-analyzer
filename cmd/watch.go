@@ -11,7 +11,6 @@ import (
 
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
-	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
 	"github.com/samn/autopilot-cost-analyzer/internal/tui"
 )
 
@@ -53,10 +52,9 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
 
-	var promClient *prometheus.Client
-	if prometheusURL != "" {
-		promClient = prometheus.NewClient(prometheusURL)
-		fmt.Printf("Fetching utilization metrics from %s\n", prometheusURL)
+	promClient, err := newPromClient(ctx)
+	if err != nil {
+		return err
 	}
 
 	calc := cost.NewCalculator(region, pt, nil)
