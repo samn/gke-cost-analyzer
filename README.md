@@ -25,6 +25,29 @@ A CLI tool to monitor and analyze costs of GKE Autopilot workloads, with support
 go build -o autopilot-cost-analyzer .
 ```
 
+### Docker
+
+Build an image from a GitHub Release binary:
+
+```bash
+# Uses the latest release by default
+docker build -t autopilot-cost-analyzer .
+
+# Pin to a specific version
+docker build --build-arg VERSION=v0.1.0 -t autopilot-cost-analyzer:0.1.0 .
+```
+
+Run with arguments passed directly:
+
+```bash
+docker run --rm autopilot-cost-analyzer version
+
+docker run --rm autopilot-cost-analyzer record \
+  --region us-central1 \
+  --project my-gcp-project \
+  --cluster-name my-cluster
+```
+
 ## Usage
 
 ### Watch costs in real-time
