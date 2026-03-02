@@ -25,6 +25,8 @@ func TestAggregatedToSnapshot(t *testing.T) {
 		clusterName: "test-cluster",
 	}
 
+	// Per-hour rates: these represent the hourly cost for the aggregation group.
+	// The snapshot should store cost for the interval window (300s = 5min = 1/12 hour).
 	agg := cost.AggregatedCost{
 		Key: cost.GroupKey{
 			Team:     "platform",
@@ -32,13 +34,13 @@ func TestAggregatedToSnapshot(t *testing.T) {
 			Subtype:  "api",
 			IsSpot:   false,
 		},
-		Namespace:    "default",
-		PodCount:     3,
-		TotalCPUVCPU: 1.5,
-		TotalMemGB:   3.0,
-		CPUCost:      0.105,
-		MemCost:      0.024,
-		TotalCost:    0.129,
+		Namespace:      "default",
+		PodCount:       3,
+		TotalCPUVCPU:   1.5,
+		TotalMemGB:     3.0,
+		CPUCostPerHour: 1.26,
+		MemCostPerHour: 0.288,
+		CostPerHour:    1.548,
 	}
 
 	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
@@ -74,20 +76,63 @@ func TestAggregatedToSnapshot(t *testing.T) {
 	if snap.MemoryRequestGB != 3.0 {
 		t.Errorf("mem request = %f, want 3.0", snap.MemoryRequestGB)
 	}
-	if snap.CPUCost != 0.105 {
-		t.Errorf("cpu cost = %f, want 0.105", snap.CPUCost)
+	// 300s = 1/12 hour. Costs should be per-hour rate × interval hours.
+	intervalHours := 300.0 / 3600.0
+	wantCPUCost := 1.26 * intervalHours    // 0.105
+	wantMemCost := 0.288 * intervalHours   // 0.024
+	wantTotalCost := 1.548 * intervalHours // 0.129
+	if snap.CPUCost != wantCPUCost {
+		t.Errorf("cpu cost = %f, want %f", snap.CPUCost, wantCPUCost)
 	}
-	if snap.MemoryCost != 0.024 {
-		t.Errorf("mem cost = %f, want 0.024", snap.MemoryCost)
+	if snap.MemoryCost != wantMemCost {
+		t.Errorf("mem cost = %f, want %f", snap.MemoryCost, wantMemCost)
 	}
-	if snap.TotalCost != 0.129 {
-		t.Errorf("total cost = %f, want 0.129", snap.TotalCost)
+	if snap.TotalCost != wantTotalCost {
+		t.Errorf("total cost = %f, want %f", snap.TotalCost, wantTotalCost)
 	}
 	if snap.IntervalSeconds != 300 {
 		t.Errorf("interval = %d, want 300", snap.IntervalSeconds)
 	}
 	if snap.IsSpot {
 		t.Error("should not be spot")
+	}
+}
+
+func TestSnapshotCostSumsCorrectlyOverDay(t *testing.T) {
+	// Verify the key invariant: SUM(total_cost) across a day's snapshots should
+	// equal cost_per_hour × 24 for a pod running the entire day.
+	sc := snapshotConfig{projectID: "p", region: "r", clusterName: "c"}
+
+	costPerHour := 0.50 // $0.50/hr
+	intervalSecs := int64(300)
+	intervalHours := float64(intervalSecs) / 3600.0
+	snapshotsPerDay := int(86400 / intervalSecs) // 288
+
+	agg := cost.AggregatedCost{
+		Key:            cost.GroupKey{Team: "t", Workload: "w"},
+		CostPerHour:    costPerHour,
+		CPUCostPerHour: 0.30,
+		MemCostPerHour: 0.20,
+	}
+
+	var totalCostSum float64
+	for i := 0; i < snapshotsPerDay; i++ {
+		snap := aggregatedToSnapshot(agg, time.Now(), sc, intervalSecs)
+		totalCostSum += snap.TotalCost
+	}
+
+	expectedDailyCost := costPerHour * 24.0 // $12.00
+	// Each snapshot contributes costPerHour * intervalHours = 0.50 * (300/3600) ≈ 0.04167
+	// 288 snapshots × 0.04167 = 12.00
+	expectedFromIntervals := costPerHour * intervalHours * float64(snapshotsPerDay)
+	if expectedFromIntervals != expectedDailyCost {
+		t.Fatalf("sanity check failed: %f != %f", expectedFromIntervals, expectedDailyCost)
+	}
+
+	const epsilon = 1e-9
+	if diff := totalCostSum - expectedDailyCost; diff > epsilon || diff < -epsilon {
+		t.Errorf("SUM(total_cost) over day = %f, want %f (diff = %f)",
+			totalCostSum, expectedDailyCost, diff)
 	}
 }
 
@@ -104,9 +149,9 @@ func TestAggregatedToSnapshotSpot(t *testing.T) {
 			Workload: "training",
 			IsSpot:   true,
 		},
-		Namespace: "ml-ns",
-		PodCount:  10,
-		TotalCost: 1.5,
+		Namespace:   "ml-ns",
+		PodCount:    10,
+		CostPerHour: 9.0,
 	}
 
 	ts := time.Now()
@@ -116,6 +161,11 @@ func TestAggregatedToSnapshotSpot(t *testing.T) {
 	}
 	if snap.IntervalSeconds != 600 {
 		t.Errorf("interval = %d, want 600", snap.IntervalSeconds)
+	}
+	// 600s = 1/6 hour. TotalCost = 9.0 * (600/3600) = 1.5
+	wantCost := 9.0 * (600.0 / 3600.0)
+	if snap.TotalCost != wantCost {
+		t.Errorf("total cost = %f, want %f", snap.TotalCost, wantCost)
 	}
 }
 

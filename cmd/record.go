@@ -195,6 +195,10 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 }
 
 func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {
+	// Compute cost for this interval window only, not the cumulative lifetime
+	// cost. Using the per-hour rate × interval hours ensures that
+	// SUM(total_cost) over a day equals the actual daily cost.
+	intervalHours := float64(intervalSecs) / 3600.0
 	snap := bigquery.CostSnapshot{
 		Timestamp:       ts,
 		ProjectID:       sc.projectID,
@@ -207,9 +211,9 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		PodCount:        a.PodCount,
 		CPURequestVCPU:  a.TotalCPUVCPU,
 		MemoryRequestGB: a.TotalMemGB,
-		CPUCost:         a.CPUCost,
-		MemoryCost:      a.MemCost,
-		TotalCost:       a.TotalCost,
+		CPUCost:         a.CPUCostPerHour * intervalHours,
+		MemoryCost:      a.MemCostPerHour * intervalHours,
+		TotalCost:       a.CostPerHour * intervalHours,
 		IsSpot:          a.Key.IsSpot,
 		IntervalSeconds: intervalSecs,
 	}

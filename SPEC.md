@@ -321,9 +321,11 @@ preventing silent deduplication.
 **Snapshot timing**: The timestamp is captured **before** listing pods, so it
 reflects the start of the snapshot window rather than when processing completed.
 
-The `record` command writes the cost snapshot at each interval. These snapshots
-represent a **point-in-time** view of running pod costs. The `interval_seconds`
-field records the configured interval for downstream cost-over-time calculations.
+The `record` command writes the cost snapshot at each interval. The cost fields
+(`cpu_cost`, `memory_cost`, `total_cost`) represent the cost incurred during the
+snapshot **interval window** only, computed as `cost_per_hour × interval_hours`.
+This ensures that `SUM(total_cost)` over a time range equals the actual cost for
+that period.
 
 #### Edge cases
 - **Empty snapshot list**: `Write()` returns nil immediately (no API call).

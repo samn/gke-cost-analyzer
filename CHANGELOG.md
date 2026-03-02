@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- `record` command: BigQuery snapshots now store the cost for the snapshot interval window (cost_per_hour × interval_hours) instead of the cumulative pod lifetime cost, fixing SUM(total_cost) queries returning values ~100x higher than actual billing
 - Release workflow now requires CI (lint, build, tests) to pass before creating a GitHub Release
 
 ## [0.2.0] - 2026-02-28
