@@ -25,8 +25,10 @@ func Init(release string) (cleanup func(), err error) {
 	}
 
 	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:     dsn,
-		Release: release,
+		Dsn:              dsn,
+		Release:          release,
+		AttachStacktrace: true,
+		EnableTracing:    false,
 	}); err != nil {
 		return noop, err
 	}
@@ -40,8 +42,18 @@ func CaptureError(err error) {
 	sentry.CaptureException(err)
 }
 
-// RecoverAndCapture recovers from a panic and sends the event to Sentry.
-// Call it as a deferred function.
+// RecoverAndCapture recovers from a panic, sends the event to Sentry, and
+// re-panics so the caller terminates with a non-zero exit code.  Call it as a
+// deferred function.
+//
+// recover() must be called directly inside the deferred function itself — not
+// from a helper called by it — so this function cannot delegate to
+// sentry.Recover() (which wraps recover() one level deeper).
 func RecoverAndCapture() {
-	sentry.Recover()
+	r := recover()
+	if r == nil {
+		return
+	}
+	sentry.CurrentHub().Recover(r)
+	panic(r)
 }

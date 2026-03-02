@@ -53,3 +53,24 @@ func TestRecoverAndCapture_NoPanic(t *testing.T) {
 
 	appSentry.RecoverAndCapture()
 }
+
+func TestRecoverAndCapture_WithPanic(t *testing.T) {
+	// Should capture the panic and re-panic so the caller sees a non-zero exit.
+	t.Setenv("SENTRY_DSN", "")
+	_, _ = appSentry.Init("")
+
+	var rePanicked bool
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				rePanicked = true
+			}
+		}()
+		defer appSentry.RecoverAndCapture()
+		panic("test panic")
+	}()
+
+	if !rePanicked {
+		t.Fatal("expected RecoverAndCapture to re-panic after capturing")
+	}
+}

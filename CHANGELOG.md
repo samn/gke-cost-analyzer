@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Release workflow now requires CI (lint, build, tests) to pass before creating a GitHub Release
+- Sentry panic recovery was silently broken: `RecoverAndCapture` delegated to `sentry.Recover()` which calls `recover()` one level too deep; per the Go spec `recover()` must be called directly inside the deferred function. Panics were never captured to Sentry. Fixed by calling `recover()` directly in `RecoverAndCapture`, then re-panicking so the process exits non-zero.
+- Added `AttachStacktrace: true` to Sentry client options so non-panic errors captured via `CaptureError` include a stack trace.
+- Added explicit `EnableTracing: false` to Sentry client options to make the error-reporting-only intent unambiguous.
 
 ## [0.2.0] - 2026-02-28
 
