@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-03
+
 ### Fixed
 - Utilization calculation with partial Prometheus data: when only some pods in a group have metrics, the utilization denominator now uses only the requests of pods with data (not all pods in the group). Previously, pods without metrics inflated the denominator, causing utilization to be significantly underestimated (e.g., 9% instead of 90% when 1 of 10 pods had data).
 
