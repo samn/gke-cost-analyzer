@@ -577,14 +577,16 @@ func TestAggregateWithUtilizationNilUsage(t *testing.T) {
 }
 
 func TestAggregateWithUtilizationPartialPods(t *testing.T) {
-	// Only one of two pods has usage data
+	// Only one of two pods has usage data. Per the spec, only pods with
+	// Prometheus data contribute to the utilization calculation — both
+	// numerator (actual usage) and denominator (requested resources).
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-1 * time.Hour)
 
 	labels := map[string]string{"team": "platform", "app": "web"}
 	pods := []kube.PodInfo{
-		kube.NewTestPodInfo("web-1", "default", 1000, 1000, startTime, false, labels),
-		kube.NewTestPodInfo("web-2", "default", 1000, 1000, startTime, false, labels),
+		kube.NewTestPodInfo("web-1", "default", 1000, 1000, startTime, false, labels), // 1 vCPU, 1 GB
+		kube.NewTestPodInfo("web-2", "default", 1000, 1000, startTime, false, labels), // 1 vCPU, 1 GB
 	}
 
 	pt := pricing.FromPrices([]pricing.Price{
@@ -608,9 +610,22 @@ func TestAggregateWithUtilizationPartialPods(t *testing.T) {
 		t.Fatal("expected HasUtilization = true")
 	}
 
-	// CPU: used = 0.5 (only web-1), requested = 2.0 (both pods) → 0.25
-	if !approxEqual(agg.CPUUtilization, 0.25, 0.001) {
-		t.Errorf("CPUUtilization = %f, want 0.25", agg.CPUUtilization)
+	// CPU: used = 0.5 (web-1), requested = 1.0 (only web-1 has data) → 0.5
+	if !approxEqual(agg.CPUUtilization, 0.5, 0.001) {
+		t.Errorf("CPUUtilization = %f, want 0.5", agg.CPUUtilization)
+	}
+
+	// Memory: used = 0.5 GB (web-1), requested = 1.0 GB (only web-1) → 0.5
+	if !approxEqual(agg.MemUtilization, 0.5, 0.001) {
+		t.Errorf("MemUtilization = %f, want 0.5", agg.MemUtilization)
+	}
+
+	// Resource totals should still reflect ALL pods (not just those with data)
+	if !approxEqual(agg.TotalCPUVCPU, 2.0, 0.001) {
+		t.Errorf("TotalCPUVCPU = %f, want 2.0 (all pods)", agg.TotalCPUVCPU)
+	}
+	if !approxEqual(agg.TotalMemGB, 2.0, 0.001) {
+		t.Errorf("TotalMemGB = %f, want 2.0 (all pods)", agg.TotalMemGB)
 	}
 }
 
