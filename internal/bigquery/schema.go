@@ -26,7 +26,7 @@ type CostSnapshot struct {
 	CPUUtilization    *float64 `json:"cpu_utilization,omitempty"`
 	MemoryUtilization *float64 `json:"memory_utilization,omitempty"`
 	EfficiencyScore   *float64 `json:"efficiency_score,omitempty"`
-	WastedCostPerHour *float64 `json:"wasted_cost_per_hour,omitempty"`
+	WastedCost        *float64 `json:"wasted_cost,omitempty"`
 }
 
 // TableSchema returns the BigQuery table schema as a JSON-compatible structure
@@ -52,7 +52,7 @@ func TableSchema() []FieldSchema {
 		{Name: "cpu_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average CPU utilization ratio (actual/requested)"},
 		{Name: "memory_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average memory utilization ratio (actual/requested)"},
 		{Name: "efficiency_score", Type: "FLOAT64", Mode: "NULLABLE", Description: "Cost-weighted utilization score (0-1)"},
-		{Name: "wasted_cost_per_hour", Type: "FLOAT64", Mode: "NULLABLE", Description: "Estimated wasted cost per hour ($)"},
+		{Name: "wasted_cost", Type: "FLOAT64", Mode: "NULLABLE", Description: "Estimated wasted cost for this interval window ($)"},
 	}
 }
 

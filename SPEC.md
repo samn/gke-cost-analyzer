@@ -282,10 +282,17 @@ efficiency = (min(cpu_util, 1.0) × cpu_cost_per_hour + min(mem_util, 1.0) × me
 CPU utilization is capped at 1.0 for the efficiency calculation — CPU burst
 above 100% still means the requested resources are fully utilized.
 
-**Wasted cost**:
+**Wasted cost** (per-hour rate, used by the TUI `watch` command):
 
 ```
 wasted_cost_per_hour = cost_per_hour × (1 - efficiency_score)
+```
+
+When recorded to BigQuery/Parquet, the wasted cost is normalized to the snapshot
+interval window (same as the other cost fields):
+
+```
+wasted_cost = wasted_cost_per_hour × interval_hours
 ```
 
 #### Edge cases
@@ -303,7 +310,7 @@ wasted_cost_per_hour = cost_per_hour × (1 - efficiency_score)
 Each record is a `CostSnapshot` with 20 fields: timestamp, project_id, region,
 cluster_name, namespace, team, workload, subtype, pod_count, cpu_request_vcpu,
 memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds,
-cpu_utilization, memory_utilization, efficiency_score, wasted_cost_per_hour.
+cpu_utilization, memory_utilization, efficiency_score, wasted_cost.
 
 The last four fields are NULLABLE FLOAT64 columns — they are only populated
 when `--prometheus-url` is configured and utilization data is available.
@@ -321,11 +328,12 @@ preventing silent deduplication.
 **Snapshot timing**: The timestamp is captured **before** listing pods, so it
 reflects the start of the snapshot window rather than when processing completed.
 
-The `record` command writes the cost snapshot at each interval. The cost fields
-(`cpu_cost`, `memory_cost`, `total_cost`) represent the cost incurred during the
-snapshot **interval window** only, computed as `cost_per_hour × interval_hours`.
-This ensures that `SUM(total_cost)` over a time range equals the actual cost for
-that period.
+The `record` command writes the cost snapshot at each interval. All cost fields
+(`cpu_cost`, `memory_cost`, `total_cost`, `wasted_cost`) represent the cost
+incurred during the snapshot **interval window** only, computed as
+`cost_per_hour × interval_hours`. This ensures that `SUM(total_cost)` (or
+`SUM(wasted_cost)`) over a time range equals the actual cost (or waste) for that
+period.
 
 #### Edge cases
 - **Empty snapshot list**: `Write()` returns nil immediately (no API call).

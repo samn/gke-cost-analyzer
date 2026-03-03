@@ -98,6 +98,80 @@ func TestAggregatedToSnapshot(t *testing.T) {
 	}
 }
 
+func TestAggregatedToSnapshotWastedCostNormalized(t *testing.T) {
+	sc := snapshotConfig{
+		projectID:   "test-project",
+		region:      "us-central1",
+		clusterName: "test-cluster",
+	}
+
+	agg := cost.AggregatedCost{
+		Key:               cost.GroupKey{Team: "platform", Workload: "web"},
+		CostPerHour:       2.0,
+		CPUCostPerHour:    1.2,
+		MemCostPerHour:    0.8,
+		HasUtilization:    true,
+		CPUUtilization:    0.5,
+		MemUtilization:    0.5,
+		EfficiencyScore:   0.5,
+		WastedCostPerHour: 1.0, // 2.0 * (1 - 0.5)
+	}
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	snap := aggregatedToSnapshot(agg, ts, sc, 300)
+
+	// WastedCost should be normalized to the interval: 1.0 * (300/3600) = 0.08333...
+	intervalHours := 300.0 / 3600.0
+	wantWasted := 1.0 * intervalHours
+	if snap.WastedCost == nil {
+		t.Fatal("WastedCost should not be nil when HasUtilization is true")
+	}
+	if *snap.WastedCost != wantWasted {
+		t.Errorf("WastedCost = %f, want %f", *snap.WastedCost, wantWasted)
+	}
+
+	// Also verify it's NOT the per-hour rate
+	if *snap.WastedCost == agg.WastedCostPerHour {
+		t.Error("WastedCost should be interval-normalized, not the per-hour rate")
+	}
+}
+
+func TestWastedCostSumsCorrectlyOverDay(t *testing.T) {
+	// Verify SUM(wasted_cost) across a day's snapshots equals
+	// wasted_cost_per_hour × 24 for a consistent workload.
+	sc := snapshotConfig{projectID: "p", region: "r", clusterName: "c"}
+
+	wastedPerHour := 0.40
+	intervalSecs := int64(300)
+	snapshotsPerDay := int(86400 / intervalSecs) // 288
+
+	agg := cost.AggregatedCost{
+		Key:               cost.GroupKey{Team: "t", Workload: "w"},
+		CostPerHour:       1.0,
+		CPUCostPerHour:    0.6,
+		MemCostPerHour:    0.4,
+		HasUtilization:    true,
+		CPUUtilization:    0.6,
+		MemUtilization:    0.6,
+		EfficiencyScore:   0.6,
+		WastedCostPerHour: wastedPerHour,
+	}
+
+	var wastedSum float64
+	for i := 0; i < snapshotsPerDay; i++ {
+		snap := aggregatedToSnapshot(agg, time.Now(), sc, intervalSecs)
+		wastedSum += *snap.WastedCost
+	}
+
+	expectedDailyWaste := wastedPerHour * 24.0
+
+	const epsilon = 1e-9
+	if diff := wastedSum - expectedDailyWaste; diff > epsilon || diff < -epsilon {
+		t.Errorf("SUM(wasted_cost) over day = %f, want %f (diff = %f)",
+			wastedSum, expectedDailyWaste, diff)
+	}
+}
+
 func TestSnapshotCostSumsCorrectlyOverDay(t *testing.T) {
 	// Verify the key invariant: SUM(total_cost) across a day's snapshots should
 	// equal cost_per_hour × 24 for a pod running the entire day.

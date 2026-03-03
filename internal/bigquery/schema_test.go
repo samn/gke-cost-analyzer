@@ -10,7 +10,7 @@ func TestTableSchema(t *testing.T) {
 		"team", "workload", "subtype", "pod_count", "cpu_request_vcpu",
 		"memory_request_gb", "cpu_cost", "memory_cost", "total_cost",
 		"is_spot", "interval_seconds",
-		"cpu_utilization", "memory_utilization", "efficiency_score", "wasted_cost_per_hour",
+		"cpu_utilization", "memory_utilization", "efficiency_score", "wasted_cost",
 	}
 
 	if len(schema) != len(expectedFields) {

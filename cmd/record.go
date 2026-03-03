@@ -221,7 +221,8 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		snap.CPUUtilization = &a.CPUUtilization
 		snap.MemoryUtilization = &a.MemUtilization
 		snap.EfficiencyScore = &a.EfficiencyScore
-		snap.WastedCostPerHour = &a.WastedCostPerHour
+		wastedCost := a.WastedCostPerHour * intervalHours
+		snap.WastedCost = &wastedCost
 	}
 	return snap
 }

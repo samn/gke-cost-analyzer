@@ -32,7 +32,7 @@ type Row struct {
 	CPUUtilization    *float64 `parquet:"cpu_utilization,optional"`
 	MemoryUtilization *float64 `parquet:"memory_utilization,optional"`
 	EfficiencyScore   *float64 `parquet:"efficiency_score,optional"`
-	WastedCostPerHour *float64 `parquet:"wasted_cost_per_hour,optional"`
+	WastedCost        *float64 `parquet:"wasted_cost,optional"`
 }
 
 // SnapshotToRow converts a BigQuery CostSnapshot to a Parquet Row.
@@ -57,7 +57,7 @@ func SnapshotToRow(s bigquery.CostSnapshot) Row {
 		CPUUtilization:    s.CPUUtilization,
 		MemoryUtilization: s.MemoryUtilization,
 		EfficiencyScore:   s.EfficiencyScore,
-		WastedCostPerHour: s.WastedCostPerHour,
+		WastedCost:        s.WastedCost,
 	}
 }
 
@@ -83,7 +83,7 @@ func RowToSnapshot(r Row) bigquery.CostSnapshot {
 		CPUUtilization:    r.CPUUtilization,
 		MemoryUtilization: r.MemoryUtilization,
 		EfficiencyScore:   r.EfficiencyScore,
-		WastedCostPerHour: r.WastedCostPerHour,
+		WastedCost:        r.WastedCost,
 	}
 }
 

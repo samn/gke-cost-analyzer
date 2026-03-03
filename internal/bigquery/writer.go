@@ -159,8 +159,8 @@ func snapshotToRow(s CostSnapshot) map[string]any {
 	if s.EfficiencyScore != nil {
 		row["efficiency_score"] = *s.EfficiencyScore
 	}
-	if s.WastedCostPerHour != nil {
-		row["wasted_cost_per_hour"] = *s.WastedCostPerHour
+	if s.WastedCost != nil {
+		row["wasted_cost"] = *s.WastedCost
 	}
 	return row
 }

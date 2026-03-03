@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking schema change**: BigQuery/Parquet column `wasted_cost_per_hour` renamed to `wasted_cost` and now stores the wasted cost for the snapshot interval window (`wasted_cost_per_hour × interval_hours`) instead of the per-hour rate. This makes `SUM(wasted_cost)` over a time range return the actual wasted cost, consistent with `cpu_cost`, `memory_cost`, and `total_cost`. Requires re-running `setup` or manually altering the table schema.
+
 ## [0.2.1] - 2026-03-02
 
 ### Fixed
