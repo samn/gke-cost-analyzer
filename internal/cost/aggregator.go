@@ -55,7 +55,12 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 		agg          AggregatedCost
 		totalCPUUsed float64 // sum of CPU cores used across pods in group
 		totalMemUsed float64 // sum of memory bytes used across pods in group
-		hasUsage     bool
+		// Requested resources for only pods with Prometheus data, used as
+		// the denominator in utilization ratios so that pods without metrics
+		// don't artificially deflate the ratio.
+		cpuRequestWithUsage float64
+		memRequestWithUsage float64
+		hasUsage            bool
 	}
 
 	groups := make(map[GroupKey]*groupAccum)
@@ -94,6 +99,8 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 			if u, found := usage[podKey]; found {
 				ga.totalCPUUsed += u.CPUCores
 				ga.totalMemUsed += u.MemoryBytes / 1e9 // convert bytes → GB (SI)
+				ga.cpuRequestWithUsage += pc.Pod.CPURequestVCPU
+				ga.memRequestWithUsage += pc.Pod.MemRequestGB
 				ga.hasUsage = true
 			}
 		}
@@ -103,11 +110,14 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 	for _, ga := range groups {
 		if ga.hasUsage {
 			ga.agg.HasUtilization = true
-			if ga.agg.TotalCPUVCPU > 0 {
-				ga.agg.CPUUtilization = ga.totalCPUUsed / ga.agg.TotalCPUVCPU
+			// Only pods with Prometheus data contribute to the utilization
+			// calculation (both numerator and denominator) so that pods
+			// without metrics don't artificially deflate the ratio.
+			if ga.cpuRequestWithUsage > 0 {
+				ga.agg.CPUUtilization = ga.totalCPUUsed / ga.cpuRequestWithUsage
 			}
-			if ga.agg.TotalMemGB > 0 {
-				ga.agg.MemUtilization = ga.totalMemUsed / ga.agg.TotalMemGB
+			if ga.memRequestWithUsage > 0 {
+				ga.agg.MemUtilization = ga.totalMemUsed / ga.memRequestWithUsage
 			}
 			ga.agg.EfficiencyScore = computeEfficiency(
 				ga.agg.CPUUtilization, ga.agg.MemUtilization,
