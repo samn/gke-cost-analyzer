@@ -181,10 +181,21 @@ ORDER BY day;
 2. **Pod and node data**: Lists running pods (and nodes for standard GKE) from the current kubeconfig context, extracting CPU/memory requests, labels, start time, node placement, and Spot detection.
 
 3. **Cost calculation**:
-   - **Autopilot**: `cost = resource_requests x duration x unit_price`
+   - **Autopilot**: `cost_per_hour = resource_requests × unit_price`. No historical data is needed — the hourly rate is derived purely from each pod's resource requests and the region's pricing.
    - **Standard GKE**: Per-node proportional attribution. Each node's cost (based on its machine type) is distributed to pods proportionally by their resource requests on that node.
 
 4. **Aggregation**: Costs are grouped by the configured label hierarchy (team, workload, subtype), Spot status, and cost mode (autopilot/standard).
+
+### Cost semantics: `watch` vs `record`
+
+The two modes display cost differently:
+
+| Column | `watch` | `record` (BigQuery) |
+|--------|---------|---------------------|
+| **$/HR** | Hourly rate based on current resource requests × unit price. Always non-zero for pods with requests. | Same formula, stored as `cost_per_hour`. |
+| **Cost** | Cumulative cost since each pod started: `cost_per_hour × hours_since_pod_start`. Pods running for hours show meaningful totals; just-started pods show ~$0. | Cost for the snapshot **interval window** only: `cost_per_hour × interval_hours`. This ensures `SUM(total_cost)` over a time range equals the actual cost for that period. |
+
+**Why `watch` shows values immediately**: The TUI computes everything from the current Kubernetes state (pod specs, start times) and cached pricing tables. No prior snapshots or historical data are required. The $/HR column appears instantly because it depends only on resource requests and prices; the Cost column uses each pod's `StartTime` from Kubernetes to calculate accumulated cost.
 
 ## Development
 
