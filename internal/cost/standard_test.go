@@ -233,6 +233,32 @@ func TestStandardCalculatorUnknownNode(t *testing.T) {
 	}
 }
 
+func TestStandardCalculatorConcurrentAccess(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+
+	// Run SetNodes and CalculateAll concurrently to verify no data race
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			sc.SetNodes([]kube.NodeInfo{
+				{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16},
+			})
+		}
+	}()
+
+	for i := 0; i < 100; i++ {
+		pods := []kube.PodInfo{
+			kube.NewTestPodInfoOnNode("pod-1", "default", 1000, 4000, startTime, false, nil, "gke-node-1"),
+		}
+		sc.CalculateAll(pods)
+	}
+	<-done
+}
+
 func TestStandardCalculatorImplementsInterface(t *testing.T) {
 	sc := NewStandardCalculator("us-central1", testComputePriceTable(), nil)
 	var _ PodCostCalculator = sc

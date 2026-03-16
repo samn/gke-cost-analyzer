@@ -32,6 +32,9 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		d := newDetector()
 		applyDefaults(d, cmd)
+		if err := validateMode(); err != nil {
+			return err
+		}
 		return nil
 	},
 }
@@ -82,6 +85,15 @@ func joinStrings(ss []string) string {
 		result += s
 	}
 	return result
+}
+
+func validateMode() error {
+	switch mode {
+	case "autopilot", "standard", "all":
+		return nil
+	default:
+		return fmt.Errorf("--mode must be one of: autopilot, standard, all (got %q)", mode)
+	}
 }
 
 // Execute runs the root command.

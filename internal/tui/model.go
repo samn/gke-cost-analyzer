@@ -19,7 +19,9 @@ type PodLister interface {
 }
 
 // NodeLister abstracts Kubernetes node listing for testability.
-type NodeLister = kube.NodeLister
+type NodeLister interface {
+	ListNodes(ctx context.Context) ([]kube.NodeInfo, error)
+}
 
 // costDataMsg carries refreshed cost data to the model.
 type costDataMsg struct {
@@ -55,7 +57,7 @@ type Model struct {
 	lister        PodLister
 	autopilotCalc *cost.Calculator
 	standardCalc  *cost.StandardCalculator
-	nodeLister    *NodeLister
+	nodeLister    NodeLister
 	lc            cost.LabelConfig
 	interval      time.Duration
 	ctx           context.Context
@@ -64,7 +66,7 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister *NodeLister, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string, showMode bool) Model {
+func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister NodeLister, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string, showMode bool) Model {
 	return Model{
 		lister:          lister,
 		autopilotCalc:   autopilotCalc,
@@ -189,7 +191,7 @@ func (m Model) fetchCosts() tea.Msg {
 	}
 
 	// Calculate costs — partition pods by type if both calculators are set
-	allCosts := calculateCosts(pods, m.autopilotCalc, m.standardCalc)
+	allCosts := cost.PartitionAndCalculate(pods, m.autopilotCalc, m.standardCalc)
 
 	aggs := cost.AggregateWithUtilization(allCosts, m.lc, usage)
 
@@ -225,29 +227,6 @@ func (m Model) helpText() string {
 	}
 	help += " · q=Quit"
 	return help
-}
-
-// calculateCosts computes pod costs using the appropriate calculator(s).
-func calculateCosts(pods []kube.PodInfo, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) []cost.PodCost {
-	switch {
-	case autopilotCalc != nil && standardCalc != nil:
-		var autopilotPods, standardPods []kube.PodInfo
-		for _, p := range pods {
-			if p.IsAutopilot {
-				autopilotPods = append(autopilotPods, p)
-			} else {
-				standardPods = append(standardPods, p)
-			}
-		}
-		allCosts := autopilotCalc.CalculateAll(autopilotPods)
-		return append(allCosts, standardCalc.CalculateAll(standardPods)...)
-	case autopilotCalc != nil:
-		return autopilotCalc.CalculateAll(pods)
-	case standardCalc != nil:
-		return standardCalc.CalculateAll(pods)
-	default:
-		return nil
-	}
 }
 
 // scheduleTick waits for the interval then sends a tick.

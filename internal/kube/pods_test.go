@@ -747,6 +747,127 @@ func TestListPodsExcludeNamespaces(t *testing.T) {
 	})
 }
 
+func TestHasAutopilotLabels(t *testing.T) {
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		expected bool
+	}{
+		{"no labels", nil, false},
+		{"empty labels", map[string]string{}, false},
+		{"autopilot label", map[string]string{"autopilot.gke.io/something": "true"}, true},
+		{"unrelated label", map[string]string{"app": "web"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasAutopilotLabels(tt.labels); got != tt.expected {
+				t.Errorf("hasAutopilotLabels(%v) = %v, want %v", tt.labels, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHasNodePoolLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		expected bool
+	}{
+		{"no labels", nil, false},
+		{"has nodepool label", map[string]string{"cloud.google.com/gke-nodepool": "pool-1"}, true},
+		{"unrelated labels", map[string]string{"app": "web"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasNodePoolLabel(tt.labels); got != tt.expected {
+				t.Errorf("hasNodePoolLabel(%v) = %v, want %v", tt.labels, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIncludeNodeLabelFallback(t *testing.T) {
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+
+	// Pod on a custom-named node with autopilot labels
+	autopilotPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "ap-pod", Namespace: "default",
+			Labels: map[string]string{"autopilot.gke.io/resource-adjustment": "true"},
+		},
+		Spec: corev1.PodSpec{
+			NodeName:   "custom-autopilot-node-1",
+			Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	// Pod on a custom-named node with nodepool label (standard)
+	standardPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "std-pod", Namespace: "default",
+			Labels: map[string]string{"cloud.google.com/gke-nodepool": "custom-pool"},
+		},
+		Spec: corev1.PodSpec{
+			NodeName:   "custom-standard-node-1",
+			Containers: []corev1.Container{{Name: "c", Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	pods := []runtime.Object{autopilotPod, standardPod}
+
+	t.Run("all mode includes label-detected pods", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeAll))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 pods with label fallback, got %d", len(result))
+		}
+	})
+
+	t.Run("autopilot mode detects via labels", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeAutopilot))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 1 || result[0].Name != "ap-pod" {
+			t.Fatalf("expected only ap-pod, got %v", result)
+		}
+		if !result[0].IsAutopilot {
+			t.Error("expected IsAutopilot = true for label-detected autopilot pod")
+		}
+	})
+
+	t.Run("standard mode detects via labels", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeStandard))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result) != 1 || result[0].Name != "std-pod" {
+			t.Fatalf("expected only std-pod, got %v", result)
+		}
+	})
+}
+
 func TestExtractPodInfoPartialRequests(t *testing.T) {
 	// Pod where only one container has CPU requests and another only has memory.
 	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))

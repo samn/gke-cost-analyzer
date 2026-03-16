@@ -25,6 +25,15 @@ type CachedComputePrices struct {
 	Prices    []ComputePrice `json:"prices"`
 }
 
+// cachedData is a constraint for types that can be stored in the cache.
+type cachedData interface {
+	CachedPrices | CachedComputePrices
+	fetchedAt() time.Time
+}
+
+func (c CachedPrices) fetchedAt() time.Time        { return c.FetchedAt }
+func (c CachedComputePrices) fetchedAt() time.Time { return c.FetchedAt }
+
 // Cache manages reading and writing pricing data to a local file cache.
 type Cache struct {
 	dir      string
@@ -79,8 +88,8 @@ func (c *Cache) path() string {
 	return filepath.Join(c.dir, c.fileName)
 }
 
-// Load reads cached prices from disk. Returns nil if the cache is missing or expired.
-func (c *Cache) Load() (*CachedPrices, error) {
+// loadCached is the generic implementation for loading cached data from disk.
+func loadCached[T cachedData](c *Cache) (*T, error) {
 	data, err := os.ReadFile(c.path())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -89,74 +98,54 @@ func (c *Cache) Load() (*CachedPrices, error) {
 		return nil, err
 	}
 
-	var cached CachedPrices
+	var cached T
 	if err := json.Unmarshal(data, &cached); err != nil {
 		return nil, nil // treat corrupt cache as cache miss
 	}
 
-	if c.now().Sub(cached.FetchedAt) > c.ttl {
+	if c.now().Sub(cached.fetchedAt()) > c.ttl {
 		return nil, nil // expired
 	}
 
 	return &cached, nil
+}
+
+// saveCached is the generic implementation for writing cached data to disk.
+func saveCached[T any](c *Cache, cached T) error {
+	if err := os.MkdirAll(c.dir, 0o755); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(cached, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(c.path(), data, 0o644)
+}
+
+// Load reads cached prices from disk. Returns nil if the cache is missing or expired.
+func (c *Cache) Load() (*CachedPrices, error) {
+	return loadCached[CachedPrices](c)
 }
 
 // Save writes prices to the cache file on disk.
 func (c *Cache) Save(prices []Price) error {
-	if err := os.MkdirAll(c.dir, 0o755); err != nil {
-		return err
-	}
-
-	cached := CachedPrices{
+	return saveCached(c, CachedPrices{
 		FetchedAt: c.now(),
 		Prices:    prices,
-	}
-
-	data, err := json.MarshalIndent(cached, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(c.path(), data, 0o644)
+	})
 }
 
 // LoadComputePrices reads cached compute prices from disk. Returns nil if the cache is missing or expired.
 func (c *Cache) LoadComputePrices() (*CachedComputePrices, error) {
-	data, err := os.ReadFile(c.path())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var cached CachedComputePrices
-	if err := json.Unmarshal(data, &cached); err != nil {
-		return nil, nil // treat corrupt cache as cache miss
-	}
-
-	if c.now().Sub(cached.FetchedAt) > c.ttl {
-		return nil, nil // expired
-	}
-
-	return &cached, nil
+	return loadCached[CachedComputePrices](c)
 }
 
 // SaveComputePrices writes compute prices to the cache file on disk.
 func (c *Cache) SaveComputePrices(prices []ComputePrice) error {
-	if err := os.MkdirAll(c.dir, 0o755); err != nil {
-		return err
-	}
-
-	cached := CachedComputePrices{
+	return saveCached(c, CachedComputePrices{
 		FetchedAt: c.now(),
 		Prices:    prices,
-	}
-
-	data, err := json.MarshalIndent(cached, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(c.path(), data, 0o644)
+	})
 }

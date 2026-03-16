@@ -188,7 +188,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 	}
 
 	// Calculate costs — partition pods by type if both calculators are set
-	allCosts := partitionAndCalculate(pods, autopilotCalc, standardCalc)
+	allCosts := cost.PartitionAndCalculate(pods, autopilotCalc, standardCalc)
 
 	aggs := cost.AggregateWithUtilization(allCosts, lc, usage)
 
@@ -225,29 +225,6 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 	fmt.Printf("[%s] Wrote %d records (%d pods)\n",
 		now.Format("15:04:05"), len(snapshots), len(pods))
 	return nil
-}
-
-// partitionAndCalculate computes pod costs using the appropriate calculator(s).
-func partitionAndCalculate(pods []kube.PodInfo, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) []cost.PodCost {
-	switch {
-	case autopilotCalc != nil && standardCalc != nil:
-		var autopilotPods, standardPods []kube.PodInfo
-		for _, p := range pods {
-			if p.IsAutopilot {
-				autopilotPods = append(autopilotPods, p)
-			} else {
-				standardPods = append(standardPods, p)
-			}
-		}
-		allCosts := autopilotCalc.CalculateAll(autopilotPods)
-		return append(allCosts, standardCalc.CalculateAll(standardPods)...)
-	case autopilotCalc != nil:
-		return autopilotCalc.CalculateAll(pods)
-	case standardCalc != nil:
-		return standardCalc.CalculateAll(pods)
-	default:
-		return nil
-	}
 }
 
 func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {

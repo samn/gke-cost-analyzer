@@ -51,7 +51,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	}
 
 	var standardCalc *cost.StandardCalculator
-	var nodeLister *tui.NodeLister
+	var nodeLister tui.NodeLister
 	if needsStandard() {
 		fmt.Println("Loading Compute Engine prices...")
 		computePrices, err := loadComputePrices(ctx)

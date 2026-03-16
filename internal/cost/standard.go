@@ -2,6 +2,7 @@ package cost
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/samn/autopilot-cost-analyzer/internal/kube"
@@ -14,6 +15,7 @@ import (
 type StandardCalculator struct {
 	prices pricing.ComputePriceTable
 	region string
+	mu     sync.RWMutex
 	nodes  map[string]kube.NodeInfo // keyed by node name
 	now    func() time.Time
 }
@@ -33,14 +35,21 @@ func NewStandardCalculator(region string, prices pricing.ComputePriceTable, now 
 
 // SetNodes updates the node inventory used for cost attribution.
 func (sc *StandardCalculator) SetNodes(nodes []kube.NodeInfo) {
-	sc.nodes = make(map[string]kube.NodeInfo, len(nodes))
+	m := make(map[string]kube.NodeInfo, len(nodes))
 	for _, n := range nodes {
-		sc.nodes[n.Name] = n
+		m[n.Name] = n
 	}
+	sc.mu.Lock()
+	sc.nodes = m
+	sc.mu.Unlock()
 }
 
 // CalculateAll computes costs for a list of pods using per-node proportional attribution.
 func (sc *StandardCalculator) CalculateAll(pods []kube.PodInfo) []PodCost {
+	sc.mu.RLock()
+	nodes := sc.nodes
+	sc.mu.RUnlock()
+
 	// Group pods by node
 	podsByNode := make(map[string][]int) // node name → indices into pods
 	for i, pod := range pods {
@@ -50,7 +59,7 @@ func (sc *StandardCalculator) CalculateAll(pods []kube.PodInfo) []PodCost {
 	costs := make([]PodCost, len(pods))
 
 	for nodeName, podIndices := range podsByNode {
-		node, ok := sc.nodes[nodeName]
+		node, ok := nodes[nodeName]
 		if !ok {
 			log.Printf("Warning: pod on unknown node %q, skipping cost attribution", nodeName)
 			for _, i := range podIndices {

@@ -89,3 +89,28 @@ func (c *Calculator) durationHours(pod kube.PodInfo) float64 {
 	}
 	return d.Hours()
 }
+
+// PartitionAndCalculate computes pod costs using the appropriate calculator(s).
+// Autopilot pods (IsAutopilot=true) are routed to autopilotCalc, others to standardCalc.
+// Either calculator may be nil if only one cost mode is active.
+func PartitionAndCalculate(pods []kube.PodInfo, autopilotCalc *Calculator, standardCalc *StandardCalculator) []PodCost {
+	switch {
+	case autopilotCalc != nil && standardCalc != nil:
+		var autopilotPods, standardPods []kube.PodInfo
+		for _, p := range pods {
+			if p.IsAutopilot {
+				autopilotPods = append(autopilotPods, p)
+			} else {
+				standardPods = append(standardPods, p)
+			}
+		}
+		allCosts := autopilotCalc.CalculateAll(autopilotPods)
+		return append(allCosts, standardCalc.CalculateAll(standardPods)...)
+	case autopilotCalc != nil:
+		return autopilotCalc.CalculateAll(pods)
+	case standardCalc != nil:
+		return standardCalc.CalculateAll(pods)
+	default:
+		return nil
+	}
+}

@@ -68,6 +68,25 @@ func TestLabelConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestValidateMode(t *testing.T) {
+	saved := mode
+	defer func() { mode = saved }()
+
+	for _, valid := range []string{"autopilot", "standard", "all"} {
+		mode = valid
+		if err := validateMode(); err != nil {
+			t.Errorf("validateMode() should accept %q, got: %v", valid, err)
+		}
+	}
+
+	for _, invalid := range []string{"typo", "Auto", "ALL", ""} {
+		mode = invalid
+		if err := validateMode(); err == nil {
+			t.Errorf("validateMode() should reject %q", invalid)
+		}
+	}
+}
+
 func TestNewPromClientExplicitURL(t *testing.T) {
 	savedURL := prometheusURL
 	savedProject := project

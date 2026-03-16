@@ -255,6 +255,90 @@ func TestCalculateNilNowUsesRealTime(t *testing.T) {
 	}
 }
 
+func TestPartitionAndCalculateBothCalcs(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	autopilotCalc := NewCalculator("us-central1", testPriceTable(), func() time.Time { return now })
+	standardCalc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	standardCalc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16, IsSpot: false},
+	})
+
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("ap-pod", "default", 500, 512, startTime, false, nil, "gk3-cluster-abc"),
+		kube.NewTestPodInfoOnNode("std-pod", "default", 1000, 4000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := PartitionAndCalculate(pods, autopilotCalc, standardCalc)
+	if len(costs) != 2 {
+		t.Fatalf("expected 2 costs, got %d", len(costs))
+	}
+
+	// Verify autopilot pod was routed to autopilot calculator
+	var apCost, stdCost PodCost
+	for _, c := range costs {
+		if c.Pod.Name == "ap-pod" {
+			apCost = c
+		} else {
+			stdCost = c
+		}
+	}
+	if apCost.Pod.Name != "ap-pod" || stdCost.Pod.Name != "std-pod" {
+		t.Fatal("expected both pods to have costs")
+	}
+	// Both should have non-zero costs
+	if apCost.CostPerHour == 0 {
+		t.Error("autopilot pod should have non-zero cost")
+	}
+	if stdCost.CostPerHour == 0 {
+		t.Error("standard pod should have non-zero cost")
+	}
+}
+
+func TestPartitionAndCalculateAutopilotOnly(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	calc := NewCalculator("us-central1", testPriceTable(), func() time.Time { return now })
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-1", "default", 500, 512, startTime, false, nil, "gk3-cluster-abc"),
+	}
+
+	costs := PartitionAndCalculate(pods, calc, nil)
+	if len(costs) != 1 {
+		t.Fatalf("expected 1 cost, got %d", len(costs))
+	}
+}
+
+func TestPartitionAndCalculateStandardOnly(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	sc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16},
+	})
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-1", "default", 1000, 4000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := PartitionAndCalculate(pods, nil, sc)
+	if len(costs) != 1 {
+		t.Fatalf("expected 1 cost, got %d", len(costs))
+	}
+}
+
+func TestPartitionAndCalculateNilCalcs(t *testing.T) {
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfo("pod-1", "default", 500, 512, time.Now(), false, nil),
+	}
+	costs := PartitionAndCalculate(pods, nil, nil)
+	if costs != nil {
+		t.Errorf("expected nil costs with nil calculators, got %d", len(costs))
+	}
+}
+
 func TestCalculateEmptyPriceTable(t *testing.T) {
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-1 * time.Hour)

@@ -3,6 +3,7 @@ package kube
 
 import (
 	"context"
+	"log"
 	"strings"
 	"time"
 
@@ -126,30 +127,55 @@ func (pl *PodLister) ListPods(ctx context.Context) ([]PodInfo, error) {
 
 	pods := make([]PodInfo, 0, len(podList.Items))
 	for i := range podList.Items {
-		nodeName := podList.Items[i].Spec.NodeName
-		if !pl.includeNode(nodeName) {
+		p := &podList.Items[i]
+		if !pl.includeNode(p.Spec.NodeName, p.Labels) {
 			continue
 		}
-		if pl.excludeNamespaces[podList.Items[i].Namespace] {
+		if pl.excludeNamespaces[p.Namespace] {
 			continue
 		}
-		pods = append(pods, extractPodInfo(&podList.Items[i]))
+		pods = append(pods, extractPodInfo(p))
 	}
 	return pods, nil
 }
 
 // includeNode returns true if the pod's node should be included based on the cluster mode.
-func (pl *PodLister) includeNode(nodeName string) bool {
+// Detection uses the node name prefix as the primary signal (gk3- for Autopilot, gke- for Standard)
+// and falls back to pod labels (cloud.google.com/gke-nodepool or autopilot.gke.io/).
+func (pl *PodLister) includeNode(nodeName string, podLabels map[string]string) bool {
+	ap := isAutopilotNode(nodeName) || hasAutopilotLabels(podLabels)
+	std := isStandardNode(nodeName) || (!ap && hasNodePoolLabel(podLabels))
+
 	switch pl.clusterMode {
 	case ClusterModeAutopilot:
-		return isAutopilotNode(nodeName)
+		return ap
 	case ClusterModeStandard:
-		return isStandardNode(nodeName)
+		return std
 	case ClusterModeAll:
-		return isAutopilotNode(nodeName) || isStandardNode(nodeName)
+		if !ap && !std && nodeName != "" {
+			log.Printf("Warning: pod on node %q does not match autopilot (gk3-) or standard (gke-) prefix; skipping", nodeName)
+		}
+		return ap || std
 	default:
-		return isAutopilotNode(nodeName) || isStandardNode(nodeName)
+		return ap || std
 	}
+}
+
+// hasAutopilotLabels returns true if the pod's labels indicate it was scheduled by Autopilot.
+func hasAutopilotLabels(labels map[string]string) bool {
+	for k := range labels {
+		if strings.HasPrefix(k, "autopilot.gke.io/") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNodePoolLabel returns true if the pod has a GKE node pool label,
+// indicating it's running on a managed GKE node.
+func hasNodePoolLabel(labels map[string]string) bool {
+	_, ok := labels["cloud.google.com/gke-nodepool"]
+	return ok
 }
 
 func extractPodInfo(pod *corev1.Pod) PodInfo {
@@ -182,7 +208,7 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 		IsSpot:          isSpotPod(pod),
 		Phase:           pod.Status.Phase,
 		NodeName:        pod.Spec.NodeName,
-		IsAutopilot:     isAutopilotNode(pod.Spec.NodeName),
+		IsAutopilot:     isAutopilotNode(pod.Spec.NodeName) || hasAutopilotLabels(pod.Labels),
 	}
 }
 
