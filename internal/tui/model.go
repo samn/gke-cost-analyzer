@@ -43,6 +43,7 @@ type Model struct {
 	podCount   int
 	err        error
 	lastUpdate time.Time
+	startedAt  time.Time
 
 	sortCfg         SortConfig
 	showSubtype     bool
@@ -82,6 +83,7 @@ func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, 
 		showMode:        showMode,
 		promClient:      promClient,
 		promProject:     promProject,
+		startedAt:       time.Now(),
 	}
 }
 
@@ -136,8 +138,9 @@ func (m Model) View() string {
 		return "Loading...\n"
 	}
 
-	header := fmt.Sprintf("GKE Cost Analyzer — %s — %d pods",
-		m.lastUpdate.Format("15:04:05"), m.podCount)
+	elapsed := time.Since(m.startedAt).Truncate(time.Second)
+	header := fmt.Sprintf("GKE Cost Analyzer — %s — %d pods — watching for %s",
+		m.lastUpdate.Format("15:04:05"), m.podCount, elapsed)
 
 	if m.err != nil {
 		header += fmt.Sprintf("  (error: %v)", m.err)

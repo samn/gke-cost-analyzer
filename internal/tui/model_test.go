@@ -82,6 +82,21 @@ func TestModelCostDataUpdate(t *testing.T) {
 	}
 }
 
+func TestModelViewShowsElapsedTime(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.startedAt = time.Now().Add(-5 * time.Minute)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "watching for 5m") {
+		t.Errorf("expected 'watching for 5m' in view, got:\n%s", view)
+	}
+}
+
 func TestModelErrorUpdate(t *testing.T) {
 	lister := &mockPodLister{}
 	m := testModel(lister)
