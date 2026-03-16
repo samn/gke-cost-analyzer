@@ -23,7 +23,7 @@ func init() {
 
 var watchCmd = &cobra.Command{
 	Use:   "watch",
-	Short: "Watch GKE Autopilot workload costs in real-time",
+	Short: "Watch GKE workload costs in real-time",
 	Long:  "Periodically fetch pod data, calculate costs, and display an aggregated cost table.",
 	RunE:  runWatch,
 }
@@ -39,12 +39,34 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
 
-	fmt.Println("Loading prices...")
-	prices, err := loadPrices(ctx)
-	if err != nil {
-		return err
+	var autopilotCalc *cost.Calculator
+	if needsAutopilot() {
+		fmt.Println("Loading Autopilot prices...")
+		prices, err := loadPrices(ctx)
+		if err != nil {
+			return err
+		}
+		pt := pricing.FromPrices(prices)
+		autopilotCalc = cost.NewCalculator(region, pt, nil)
 	}
-	pt := pricing.FromPrices(prices)
+
+	var standardCalc *cost.StandardCalculator
+	var nodeLister *tui.NodeLister
+	if needsStandard() {
+		fmt.Println("Loading Compute Engine prices...")
+		computePrices, err := loadComputePrices(ctx)
+		if err != nil {
+			return err
+		}
+		cpt := pricing.FromComputePrices(computePrices)
+		standardCalc = cost.NewStandardCalculator(region, cpt, nil)
+
+		nl, err := newNodeLister()
+		if err != nil {
+			return fmt.Errorf("connecting to cluster for node listing: %w", err)
+		}
+		nodeLister = nl
+	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
 	lister, err := newPodLister()
@@ -57,10 +79,10 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
+	showMode := mode == "all"
 
-	model := tui.NewModel(ctx, cancel, lister, calc, lc, watchInterval, promClient, project)
+	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode)
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

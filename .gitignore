@@ -33,3 +33,5 @@ go.work.sum
 
 autopilot-cost-analyzer
 dist/
+
+.claude/settings.local.json

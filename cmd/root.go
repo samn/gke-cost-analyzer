@@ -17,6 +17,7 @@ var (
 	project           string
 	excludeNamespaces []string
 	prometheusURL     string
+	mode              string
 )
 
 // newDetector is overridable for testing.
@@ -44,6 +45,7 @@ func init() {
 	rootCmd.PersistentFlags().StringSliceVar(&excludeNamespaces, "exclude-namespaces", []string{"kube-system", "gmp-system"}, "Namespaces to exclude from pod listing (comma-separated)")
 	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)")
 	rootCmd.PersistentFlags().StringVar(&project, "project", "", "GCP project ID (auto-detected from environment)")
+	rootCmd.PersistentFlags().StringVar(&mode, "mode", "all", "Cost calculation mode: autopilot, standard, or all")
 }
 
 // applyDefaults fills in missing flag values from environment detection.

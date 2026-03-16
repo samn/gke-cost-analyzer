@@ -29,11 +29,24 @@ func sortIndicator(header string, col SortColumn, cfg SortConfig) string {
 	return header + " v"
 }
 
+// costModeShort returns a short display string for the cost mode.
+func costModeShort(mode string) string {
+	switch mode {
+	case "autopilot":
+		return "AP"
+	case "standard":
+		return "STD"
+	default:
+		return mode
+	}
+}
+
 // RenderTable renders the aggregated costs as a formatted table string.
 // When showSubtype is true, a SUBTYPE column is included.
 // When showUtilization is true, CPU%, MEM%, and WASTE columns are included.
+// When showMode is true, a MODE column is included.
 // The sortCfg controls which column header receives a sort indicator arrow.
-func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization bool, sortCfg SortConfig) string {
+func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization, showMode bool, sortCfg SortConfig) string {
 	rows := make([][]string, 0, len(aggs)+1)
 
 	var totalCostPerHour, totalCost, totalWaste float64
@@ -48,6 +61,9 @@ func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization bool, 
 		}
 		if showSubtype {
 			row = append(row, orDefault(a.Key.Subtype, "-"))
+		}
+		if showMode {
+			row = append(row, costModeShort(a.CostMode))
 		}
 		row = append(row,
 			fmt.Sprintf("%d", a.PodCount),
@@ -79,6 +95,9 @@ func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization bool, 
 	if showSubtype {
 		totalRow = append(totalRow, "")
 	}
+	if showMode {
+		totalRow = append(totalRow, "")
+	}
 	totalRow = append(totalRow, "", "", "",
 		fmt.Sprintf("$%.4f", totalCostPerHour),
 		fmt.Sprintf("$%.4f", totalCost),
@@ -98,6 +117,9 @@ func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization bool, 
 	if showSubtype {
 		headers = append(headers, sortIndicator("SUBTYPE", SortBySubtype, sortCfg))
 	}
+	if showMode {
+		headers = append(headers, sortIndicator("MODE", SortByMode, sortCfg))
+	}
 	headers = append(headers,
 		sortIndicator("PODS", SortByPods, sortCfg),
 		sortIndicator("CPU REQ", SortByCPU, sortCfg),
@@ -114,10 +136,13 @@ func RenderTable(aggs []cost.AggregatedCost, showSubtype, showUtilization bool, 
 		)
 	}
 
-	// First numeric column index depends on whether SUBTYPE is shown.
+	// First numeric column index depends on optional columns.
 	numericStart := 2
 	if showSubtype {
-		numericStart = 3
+		numericStart++
+	}
+	if showMode {
+		numericStart++
 	}
 	// Base numeric columns: PODS, CPU REQ, MEM REQ, $/HR, COST
 	numericEnd := numericStart + 4

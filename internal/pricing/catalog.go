@@ -169,7 +169,11 @@ type unitPrice struct {
 }
 
 func (cc *CatalogClient) fetchSKUPage(ctx context.Context, pageToken string) ([]catalogSKU, string, error) {
-	reqURL := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, kubernetesEngineServiceID)
+	return cc.fetchSKUPageWithServiceID(ctx, kubernetesEngineServiceID, pageToken)
+}
+
+func (cc *CatalogClient) fetchSKUPageWithServiceID(ctx context.Context, serviceID, pageToken string) ([]catalogSKU, string, error) {
+	reqURL := fmt.Sprintf("%s/services/%s/skus?pageSize=5000", cc.baseURL, serviceID)
 	if pageToken != "" {
 		reqURL += "&pageToken=" + url.QueryEscape(pageToken)
 	}

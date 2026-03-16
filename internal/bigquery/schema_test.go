@@ -9,7 +9,7 @@ func TestTableSchema(t *testing.T) {
 		"timestamp", "project_id", "region", "cluster_name", "namespace",
 		"team", "workload", "subtype", "pod_count", "cpu_request_vcpu",
 		"memory_request_gb", "cpu_cost", "memory_cost", "total_cost",
-		"is_spot", "interval_seconds",
+		"is_spot", "interval_seconds", "cost_mode",
 		"cpu_utilization", "memory_utilization", "efficiency_score", "wasted_cost",
 	}
 

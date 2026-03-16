@@ -18,6 +18,9 @@ type PodLister interface {
 	ListPods(ctx context.Context) ([]kube.PodInfo, error)
 }
 
+// NodeLister abstracts Kubernetes node listing for testability.
+type NodeLister = kube.NodeLister
+
 // costDataMsg carries refreshed cost data to the model.
 type costDataMsg struct {
 	aggs         []cost.AggregatedCost
@@ -42,26 +45,31 @@ type Model struct {
 	sortCfg         SortConfig
 	showSubtype     bool
 	showUtilization bool
+	showMode        bool // show MODE column (when in "all" mode)
 
 	// Prometheus status (displayed in header when utilization is enabled).
 	promErr      error  // last Prometheus fetch error (nil = OK)
 	utilPodCount int    // number of pods with utilization data
 	promProject  string // GCP project queried for Prometheus metrics
 
-	lister     PodLister
-	calc       *cost.Calculator
-	lc         cost.LabelConfig
-	interval   time.Duration
-	ctx        context.Context
-	cancel     context.CancelFunc
-	promClient *prometheus.Client
+	lister        PodLister
+	autopilotCalc *cost.Calculator
+	standardCalc  *cost.StandardCalculator
+	nodeLister    *NodeLister
+	lc            cost.LabelConfig
+	interval      time.Duration
+	ctx           context.Context
+	cancel        context.CancelFunc
+	promClient    *prometheus.Client
 }
 
 // NewModel creates a new TUI model.
-func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, calc *cost.Calculator, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string) Model {
+func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister *NodeLister, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string, showMode bool) Model {
 	return Model{
 		lister:          lister,
-		calc:            calc,
+		autopilotCalc:   autopilotCalc,
+		standardCalc:    standardCalc,
+		nodeLister:      nodeLister,
 		lc:              lc,
 		interval:        interval,
 		ctx:             ctx,
@@ -69,6 +77,7 @@ func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, 
 		sortCfg:         DefaultSort(),
 		showSubtype:     lc.SubtypeLabel != "",
 		showUtilization: promClient != nil,
+		showMode:        showMode,
 		promClient:      promClient,
 		promProject:     promProject,
 	}
@@ -89,7 +98,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 			key := rune(msg.String()[0])
-			if col, ok := ColumnForKey(key, m.showSubtype, m.showUtilization); ok {
+			if col, ok := ColumnForKey(key, m.showSubtype, m.showUtilization, m.showMode); ok {
 				if col == m.sortCfg.Column {
 					m.sortCfg.Asc = !m.sortCfg.Asc
 				} else {
@@ -125,7 +134,7 @@ func (m Model) View() string {
 		return "Loading...\n"
 	}
 
-	header := fmt.Sprintf("Autopilot Cost Analyzer — %s — %d pods",
+	header := fmt.Sprintf("GKE Cost Analyzer — %s — %d pods",
 		m.lastUpdate.Format("15:04:05"), m.podCount)
 
 	if m.err != nil {
@@ -154,7 +163,7 @@ func (m Model) View() string {
 
 	help := m.helpText()
 
-	return header + "\n\n" + RenderTable(sorted, m.showSubtype, m.showUtilization, m.sortCfg) + "\n\n" + help + "\n"
+	return header + "\n\n" + RenderTable(sorted, m.showSubtype, m.showUtilization, m.showMode, m.sortCfg) + "\n\n" + help + "\n"
 }
 
 // fetchCosts fetches pod data and calculates costs.
@@ -164,14 +173,25 @@ func (m Model) fetchCosts() tea.Msg {
 		return errMsg{fmt.Errorf("listing pods: %w", err)}
 	}
 
+	// Refresh nodes for standard calculator
+	if m.nodeLister != nil && m.standardCalc != nil {
+		nodes, err := m.nodeLister.ListNodes(m.ctx)
+		if err != nil {
+			return errMsg{fmt.Errorf("listing nodes: %w", err)}
+		}
+		m.standardCalc.SetNodes(nodes)
+	}
+
 	var usage map[prometheus.PodKey]prometheus.PodUsage
 	var promErr error
 	if m.promClient != nil {
 		usage, promErr = m.promClient.FetchUsage(m.ctx)
 	}
 
-	costs := m.calc.CalculateAll(pods)
-	aggs := cost.AggregateWithUtilization(costs, m.lc, usage)
+	// Calculate costs — partition pods by type if both calculators are set
+	allCosts := calculateCosts(pods, m.autopilotCalc, m.standardCalc)
+
+	aggs := cost.AggregateWithUtilization(allCosts, m.lc, usage)
 
 	return costDataMsg{
 		aggs:         aggs,
@@ -183,16 +203,51 @@ func (m Model) fetchCosts() tea.Msg {
 
 // helpText returns the footer help line showing sort key mappings.
 func (m Model) helpText() string {
-	if m.showSubtype && m.showUtilization {
-		return "Sort: 1=Team 2=Workload 3=Subtype 4=Pods 5=CPU 6=Mem 7=$/hr 8=Cost 9=CPU% 0=Waste · q=Quit"
-	}
+	cols := []string{"Team", "Workload"}
 	if m.showSubtype {
-		return "Sort: 1=Team 2=Workload 3=Subtype 4=Pods 5=CPU 6=Mem 7=$/hr 8=Cost · q=Quit"
+		cols = append(cols, "Subtype")
 	}
+	if m.showMode {
+		cols = append(cols, "Mode")
+	}
+	cols = append(cols, "Pods", "CPU", "Mem", "$/hr", "Cost")
 	if m.showUtilization {
-		return "Sort: 1=Team 2=Workload 3=Pods 4=CPU 5=Mem 6=$/hr 7=Cost 8=CPU% 9=Waste · q=Quit"
+		cols = append(cols, "CPU%", "Waste")
 	}
-	return "Sort: 1=Team 2=Workload 3=Pods 4=CPU 5=Mem 6=$/hr 7=Cost · q=Quit"
+
+	help := "Sort:"
+	for i, c := range cols {
+		key := i + 1
+		if key == 10 {
+			key = 0
+		}
+		help += fmt.Sprintf(" %d=%s", key, c)
+	}
+	help += " · q=Quit"
+	return help
+}
+
+// calculateCosts computes pod costs using the appropriate calculator(s).
+func calculateCosts(pods []kube.PodInfo, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) []cost.PodCost {
+	switch {
+	case autopilotCalc != nil && standardCalc != nil:
+		var autopilotPods, standardPods []kube.PodInfo
+		for _, p := range pods {
+			if p.IsAutopilot {
+				autopilotPods = append(autopilotPods, p)
+			} else {
+				standardPods = append(standardPods, p)
+			}
+		}
+		allCosts := autopilotCalc.CalculateAll(autopilotPods)
+		return append(allCosts, standardCalc.CalculateAll(standardPods)...)
+	case autopilotCalc != nil:
+		return autopilotCalc.CalculateAll(pods)
+	case standardCalc != nil:
+		return standardCalc.CalculateAll(pods)
+	default:
+		return nil
+	}
 }
 
 // scheduleTick waits for the interval then sends a tick.

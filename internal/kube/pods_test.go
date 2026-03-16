@@ -311,23 +311,97 @@ func TestListPodsFiltersNonAutopilotNodes(t *testing.T) {
 		},
 	}
 
-	client := fake.NewSimpleClientset(pods...)
-	pl, err := NewPodLister(WithClient(client))
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Run("autopilot mode", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeAutopilot))
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	result, err := pl.ListPods(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if len(result) != 1 {
-		t.Fatalf("expected 1 pod (autopilot only), got %d", len(result))
-	}
-	if result[0].Name != "autopilot-pod" {
-		t.Errorf("expected autopilot-pod, got %s", result[0].Name)
-	}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 pod (autopilot only), got %d", len(result))
+		}
+		if result[0].Name != "autopilot-pod" {
+			t.Errorf("expected autopilot-pod, got %s", result[0].Name)
+		}
+		if !result[0].IsAutopilot {
+			t.Error("expected IsAutopilot = true")
+		}
+	})
+
+	t.Run("standard mode", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeStandard))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(result) != 1 {
+			t.Fatalf("expected 1 pod (standard only), got %d", len(result))
+		}
+		if result[0].Name != "standard-pod" {
+			t.Errorf("expected standard-pod, got %s", result[0].Name)
+		}
+		if result[0].IsAutopilot {
+			t.Error("expected IsAutopilot = false")
+		}
+	})
+
+	t.Run("all mode", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client), WithClusterMode(ClusterModeAll))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Should include autopilot and standard, but not unscheduled
+		if len(result) != 2 {
+			t.Fatalf("expected 2 pods (autopilot + standard), got %d", len(result))
+		}
+		names := map[string]bool{}
+		for _, p := range result {
+			names[p.Name] = true
+		}
+		if !names["autopilot-pod"] {
+			t.Error("expected autopilot-pod")
+		}
+		if !names["standard-pod"] {
+			t.Error("expected standard-pod")
+		}
+	})
+
+	t.Run("default mode is all", func(t *testing.T) {
+		client := fake.NewSimpleClientset(pods...)
+		pl, err := NewPodLister(WithClient(client))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := pl.ListPods(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Default mode is all — includes both autopilot and standard
+		if len(result) != 2 {
+			t.Fatalf("expected 2 pods (default=all), got %d", len(result))
+		}
+	})
 }
 
 func TestIsAutopilotNode(t *testing.T) {

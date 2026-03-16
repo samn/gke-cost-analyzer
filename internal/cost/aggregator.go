@@ -17,11 +17,13 @@ type GroupKey struct {
 	Workload string
 	Subtype  string
 	IsSpot   bool
+	CostMode string // "autopilot" or "standard"; empty treated as "autopilot"
 }
 
 // AggregatedCost holds aggregated cost metrics for a group of pods.
 type AggregatedCost struct {
 	Key            GroupKey
+	CostMode       string // "autopilot" or "standard"
 	Namespace      string // namespace of the first pod (for reference)
 	PodCount       int
 	TotalCPUVCPU   float64
@@ -66,11 +68,16 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 	groups := make(map[GroupKey]*groupAccum)
 
 	for _, pc := range costs {
+		costMode := "standard"
+		if pc.Pod.IsAutopilot {
+			costMode = "autopilot"
+		}
 		key := GroupKey{
 			Team:     labelValue(pc.Pod.Labels, labels.TeamLabel),
 			Workload: labelValue(pc.Pod.Labels, labels.WorkloadLabel),
 			Subtype:  labelValue(pc.Pod.Labels, labels.SubtypeLabel),
 			IsSpot:   pc.Pod.IsSpot,
+			CostMode: costMode,
 		}
 
 		ga, ok := groups[key]
@@ -78,6 +85,7 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 			ga = &groupAccum{
 				agg: AggregatedCost{
 					Key:       key,
+					CostMode:  costMode,
 					Namespace: pc.Pod.Namespace,
 				},
 			}

@@ -10,7 +10,7 @@ Autopilot Pods are billed for their resource requests * running duration * resou
 
 ## autopilot-cost-analyzer CLI
 
-A tool (written in golang) to monitor usage of Autopilot workloads and either display a table of cost over time (`watch`) or write to bigquery.
+A tool (written in golang) to monitor usage of GKE workloads (Autopilot and standard) and either display a table of cost over time (`watch`) or write to bigquery.
 There should be a command to create the necessary BigQuery dataset & tables. Prices should be fetched from the prices API and cached in `~/.cache`.
 SPOT prices must be supported.
 
@@ -78,6 +78,9 @@ string to include all namespaces.
 used by `record`/`setup` for BigQuery and by all commands for GMP Prometheus).
 `--prometheus-url` (override Prometheus API base URL; defaults to GCP Managed
 Prometheus when a project ID is available).
+`--mode` (cost calculation mode: `autopilot`, `standard`, or `all`; default
+`all`). In `all` mode, pods are partitioned by node type and costed with the
+appropriate calculator; a MODE column is shown in the TUI.
 
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
@@ -178,6 +181,65 @@ started), it is stored as zero time.
   Empty exclusion list disables the filter.
 - **Kubernetes API errors**: Propagated to the caller.
 
+### 2b. Node Discovery (`internal/kube`)
+
+Nodes are listed from the Kubernetes API for standard GKE cost attribution.
+Only nodes with the `gke-` name prefix are included (Autopilot `gk3-` nodes
+are excluded).
+
+**Machine type**: Extracted from the `node.kubernetes.io/instance-type` label
+(e.g., `n2-standard-4`).
+
+**Machine family**: Parsed from the machine type by taking the first segment
+before the first `-`. Special case: bare `custom-N-M` types map to family
+`n1` (GCP bills N1 rates for these).
+
+**Allocatable resources**: vCPU and memory are read from
+`node.Status.Allocatable` (reliable for all machine types including custom).
+
+**Spot detection**: A node is considered Spot if its label
+`cloud.google.com/gke-spot` is `"true"`.
+
+### 1b. Compute Engine Price Fetching (`internal/pricing`)
+
+Prices are fetched from the **Cloud Billing Catalog API** for the Compute
+Engine service (ID `6F81-5844-456A`). The API is paginated (page size 5000).
+
+**SKU Matching**: SKUs are matched by regex:
+`^(Spot Preemptible )?(N2|E2|N1|C3|...) Instance (Core|Ram) running in`
+
+- `"Core"` → CPU, `"Ram"` → Memory
+- `"Spot Preemptible"` prefix → Spot tier
+- Family name → MachineFamily (lowercased)
+
+Unlike Autopilot (per-mCPU), Compute Engine CPU prices are already per-vCPU-hour
+— no ×1000 conversion is needed.
+
+**Caching**: Prices are cached to
+`~/.cache/autopilot-cost-analyzer/compute_prices.json` with the same 24-hour
+TTL as Autopilot prices.
+
+### 3b. Standard Cost Calculation (`internal/cost`)
+
+For standard GKE, costs are attributed to pods proportionally by their resource
+requests on each node:
+
+```
+node_cpu_cost = node.VCPU × cpu_price_per_vcpu_hour
+node_mem_cost = node.MemoryGB × mem_price_per_gb_hour
+pod_cpu_share = pod.CPURequest / total_cpu_requests_on_node
+pod_cost_per_hour = pod_cpu_share × node_cpu_cost + pod_mem_share × node_mem_cost
+```
+
+Edge cases:
+- **Zero total requests on a node**: Cost share is 0 for all pods
+- **Pod on unknown node**: Skipped with warning, $0 cost
+- **System pods excluded**: Their cost is absorbed by visible workloads
+
+**Known limitations (v1)**:
+- GPU and local SSD costs are not attributed
+- Sustained use discounts and committed use discounts are not accounted for
+
 ### 3. Cost Calculation (`internal/cost`)
 
 The core formula for a single pod:
@@ -215,6 +277,7 @@ Pod costs are grouped by a **GroupKey** consisting of:
 - `Workload`: value of the workload label
 - `Subtype`: value of the subtype label
 - `IsSpot`: whether the pod is SPOT
+- `CostMode`: `"autopilot"` or `"standard"` (derived from `pod.IsAutopilot`)
 
 SPOT and On-Demand pods with the same labels are **always separate groups**
 because they have different pricing tiers.
@@ -307,10 +370,13 @@ wasted_cost = wasted_cost_per_hour × interval_hours
 
 ### 6. BigQuery Snapshot Model (`internal/bigquery`)
 
-Each record is a `CostSnapshot` with 20 fields: timestamp, project_id, region,
+Each record is a `CostSnapshot` with 21 fields: timestamp, project_id, region,
 cluster_name, namespace, team, workload, subtype, pod_count, cpu_request_vcpu,
 memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds,
-cpu_utilization, memory_utilization, efficiency_score, wasted_cost.
+cost_mode, cpu_utilization, memory_utilization, efficiency_score, wasted_cost.
+
+The `cost_mode` field is a NULLABLE STRING (`"autopilot"` or `"standard"`).
+Existing rows with NULL are treated as `"autopilot"` (backward compatible).
 
 The last four fields are NULLABLE FLOAT64 columns — they are only populated
 when `--prometheus-url` is configured and utilization data is available.

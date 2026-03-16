@@ -30,7 +30,7 @@ func TestCacheSaveAndLoad(t *testing.T) {
 	}
 
 	// Verify file was written
-	if _, err := os.Stat(filepath.Join(dir, cacheFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, defaultCacheFileName)); err != nil {
 		t.Fatal("cache file not created")
 	}
 
@@ -132,7 +132,7 @@ func TestCacheCorruptFile(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write garbage to the cache file
-	if err := os.WriteFile(filepath.Join(dir, cacheFileName), []byte("not json"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, defaultCacheFileName), []byte("not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -189,7 +189,7 @@ func TestCacheSaveCreatesDirectory(t *testing.T) {
 	}
 
 	// Verify the file exists
-	if _, err := os.Stat(filepath.Join(subDir, cacheFileName)); err != nil {
+	if _, err := os.Stat(filepath.Join(subDir, defaultCacheFileName)); err != nil {
 		t.Fatal("expected cache file to exist in nested dir")
 	}
 }

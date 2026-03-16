@@ -82,7 +82,7 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 	rows := make([]insertRow, len(snapshots))
 	for i, s := range snapshots {
 		rows[i] = insertRow{
-			InsertID: fmt.Sprintf("%s-%s-%s-%s-%s-%s-%t-%d", s.ProjectID, s.ClusterName, s.Namespace, s.Team, s.Workload, s.Subtype, s.IsSpot, s.Timestamp.UnixNano()),
+			InsertID: fmt.Sprintf("%s-%s-%s-%s-%s-%s-%t-%s-%d", s.ProjectID, s.ClusterName, s.Namespace, s.Team, s.Workload, s.Subtype, s.IsSpot, s.CostMode, s.Timestamp.UnixNano()),
 			JSON:     snapshotToRow(s),
 		}
 	}
@@ -149,6 +149,9 @@ func snapshotToRow(s CostSnapshot) map[string]any {
 		"total_cost":        s.TotalCost,
 		"is_spot":           s.IsSpot,
 		"interval_seconds":  s.IntervalSeconds,
+	}
+	if s.CostMode != "" {
+		row["cost_mode"] = s.CostMode
 	}
 	if s.CPUUtilization != nil {
 		row["cpu_utilization"] = *s.CPUUtilization

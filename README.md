@@ -1,10 +1,11 @@
 # autopilot-cost-analyzer
 
-A CLI tool to monitor and analyze costs of GKE Autopilot workloads, with support for real-time display and BigQuery export.
+A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard), with support for real-time display and BigQuery export.
 
 ## Features
 
-- **Real-time cost monitoring** (`watch`): Displays a live table of Autopilot workload costs aggregated by configurable labels
+- **Real-time cost monitoring** (`watch`): Displays a live table of GKE workload costs aggregated by configurable labels
+- **Standard GKE cost estimation**: Per-node proportional attribution for standard GKE workloads based on Compute Engine pricing
 - **BigQuery recording** (`record`): Periodically writes cost snapshots to BigQuery for historical analysis
 - **Automated setup** (`setup`): Creates BigQuery dataset and table with the correct schema
 - **Price caching**: Fetches Autopilot pricing from the Cloud Billing Catalog API and caches locally
@@ -52,7 +53,7 @@ docker run --rm autopilot-cost-analyzer record \
 
 ### Kubernetes RBAC
 
-The tool only needs read access to pods. It does not create, modify, or delete any Kubernetes resources.
+The tool needs read access to pods and nodes. It does not create, modify, or delete any Kubernetes resources.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -61,7 +62,7 @@ metadata:
   name: autopilot-cost-analyzer
 rules:
 - apiGroups: [""]
-  resources: ["pods"]
+  resources: ["pods", "nodes"]
   verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -106,6 +107,7 @@ autopilot-cost-analyzer watch --region us-central1
 
 Options:
 - `--region` (required): GCP region for pricing lookup
+- `--mode`: Cost calculation mode: `autopilot`, `standard`, or `all` (default: `all`)
 - `--interval`: Refresh interval (default: 10s)
 - `--namespace`: Filter to a specific namespace (default: all)
 - `--team-label`: Pod label for team grouping (default: "team")
@@ -174,13 +176,15 @@ ORDER BY day;
 
 ## How it works
 
-1. **Pricing**: Fetches Autopilot pod-level SKUs from the Cloud Billing Catalog API (CPU and Memory, both on-demand and Spot). Prices are cached locally in `~/.cache/autopilot-cost-analyzer/` for 24 hours.
+1. **Pricing**: Fetches pricing from the Cloud Billing Catalog API. For Autopilot: pod-level CPU/Memory SKUs from the Kubernetes Engine service. For standard GKE: Compute Engine per-vCPU and per-GB instance SKUs by machine family. Prices are cached locally in `~/.cache/autopilot-cost-analyzer/` for 24 hours.
 
-2. **Pod data**: Lists running pods from the current kubeconfig context, extracting CPU/memory requests, labels, start time, and Spot detection.
+2. **Pod and node data**: Lists running pods (and nodes for standard GKE) from the current kubeconfig context, extracting CPU/memory requests, labels, start time, node placement, and Spot detection.
 
-3. **Cost calculation**: `cost = resource_requests x duration x unit_price`. SPOT prices are used automatically when pods are detected as Spot (via `cloud.google.com/gke-spot=true` or `cloud.google.com/compute-class=autopilot-spot` node selectors).
+3. **Cost calculation**:
+   - **Autopilot**: `cost = resource_requests x duration x unit_price`
+   - **Standard GKE**: Per-node proportional attribution. Each node's cost (based on its machine type) is distributed to pods proportionally by their resource requests on that node.
 
-4. **Aggregation**: Costs are grouped by the configured label hierarchy (team, workload, subtype) and Spot status.
+4. **Aggregation**: Costs are grouped by the configured label hierarchy (team, workload, subtype), Spot status, and cost mode (autopilot/standard).
 
 ## Development
 

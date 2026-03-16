@@ -22,6 +22,8 @@ type CostSnapshot struct {
 	IsSpot          bool      `json:"is_spot"`
 	IntervalSeconds int64     `json:"interval_seconds"`
 
+	CostMode string `json:"cost_mode,omitempty"` // "autopilot" or "standard"
+
 	// Utilization fields — nil when Prometheus data is not available.
 	CPUUtilization    *float64 `json:"cpu_utilization,omitempty"`
 	MemoryUtilization *float64 `json:"memory_utilization,omitempty"`
@@ -49,6 +51,7 @@ func TableSchema() []FieldSchema {
 		{Name: "total_cost", Type: "FLOAT64", Mode: "REQUIRED", Description: "Total cost for this window ($)"},
 		{Name: "is_spot", Type: "BOOL", Mode: "REQUIRED", Description: "Whether these pods are SPOT"},
 		{Name: "interval_seconds", Type: "INT64", Mode: "REQUIRED", Description: "Snapshot interval in seconds"},
+		{Name: "cost_mode", Type: "STRING", Mode: "NULLABLE", Description: "Cost model: autopilot or standard"},
 		{Name: "cpu_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average CPU utilization ratio (actual/requested)"},
 		{Name: "memory_utilization", Type: "FLOAT64", Mode: "NULLABLE", Description: "Average memory utilization ratio (actual/requested)"},
 		{Name: "efficiency_score", Type: "FLOAT64", Mode: "NULLABLE", Description: "Cost-weighted utilization score (0-1)"},

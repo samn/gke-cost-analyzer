@@ -13,6 +13,18 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// ClusterMode determines which types of GKE nodes to include.
+type ClusterMode string
+
+const (
+	// ClusterModeAutopilot includes only Autopilot nodes (gk3- prefix).
+	ClusterModeAutopilot ClusterMode = "autopilot"
+	// ClusterModeStandard includes only Standard nodes (gke- prefix).
+	ClusterModeStandard ClusterMode = "standard"
+	// ClusterModeAll includes both Autopilot and Standard nodes.
+	ClusterModeAll ClusterMode = "all"
+)
+
 // PodInfo contains the extracted pod data needed for cost calculation.
 type PodInfo struct {
 	Name            string
@@ -25,6 +37,8 @@ type PodInfo struct {
 	StartTime       time.Time
 	IsSpot          bool
 	Phase           corev1.PodPhase
+	NodeName        string // Kubernetes node name
+	IsAutopilot     bool   // true if pod is on an Autopilot node (gk3- prefix)
 }
 
 // PodLister lists pods from a Kubernetes cluster.
@@ -32,6 +46,7 @@ type PodLister struct {
 	client            kubernetes.Interface
 	namespace         string
 	excludeNamespaces map[string]bool
+	clusterMode       ClusterMode
 }
 
 // PodListerOption configures a PodLister.
@@ -45,6 +60,11 @@ func WithNamespace(ns string) PodListerOption {
 // WithClient sets a custom kubernetes client (for testing).
 func WithClient(c kubernetes.Interface) PodListerOption {
 	return func(pl *PodLister) { pl.client = c }
+}
+
+// WithClusterMode sets the cluster mode for filtering pods by node type.
+func WithClusterMode(mode ClusterMode) PodListerOption {
+	return func(pl *PodLister) { pl.clusterMode = mode }
 }
 
 // WithExcludeNamespaces sets namespaces to exclude from pod listing.
@@ -62,7 +82,8 @@ func WithExcludeNamespaces(ns []string) PodListerOption {
 // NewPodLister creates a PodLister using the default kubeconfig.
 func NewPodLister(opts ...PodListerOption) (*PodLister, error) {
 	pl := &PodLister{
-		namespace: "", // all namespaces
+		namespace:   "", // all namespaces
+		clusterMode: ClusterModeAll,
 	}
 	for _, opt := range opts {
 		opt(pl)
@@ -105,7 +126,8 @@ func (pl *PodLister) ListPods(ctx context.Context) ([]PodInfo, error) {
 
 	pods := make([]PodInfo, 0, len(podList.Items))
 	for i := range podList.Items {
-		if !isAutopilotNode(podList.Items[i].Spec.NodeName) {
+		nodeName := podList.Items[i].Spec.NodeName
+		if !pl.includeNode(nodeName) {
 			continue
 		}
 		if pl.excludeNamespaces[podList.Items[i].Namespace] {
@@ -114,6 +136,20 @@ func (pl *PodLister) ListPods(ctx context.Context) ([]PodInfo, error) {
 		pods = append(pods, extractPodInfo(&podList.Items[i]))
 	}
 	return pods, nil
+}
+
+// includeNode returns true if the pod's node should be included based on the cluster mode.
+func (pl *PodLister) includeNode(nodeName string) bool {
+	switch pl.clusterMode {
+	case ClusterModeAutopilot:
+		return isAutopilotNode(nodeName)
+	case ClusterModeStandard:
+		return isStandardNode(nodeName)
+	case ClusterModeAll:
+		return isAutopilotNode(nodeName) || isStandardNode(nodeName)
+	default:
+		return isAutopilotNode(nodeName) || isStandardNode(nodeName)
+	}
 }
 
 func extractPodInfo(pod *corev1.Pod) PodInfo {
@@ -145,6 +181,8 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 		StartTime:       startTime,
 		IsSpot:          isSpotPod(pod),
 		Phase:           pod.Status.Phase,
+		NodeName:        pod.Spec.NodeName,
+		IsAutopilot:     isAutopilotNode(pod.Spec.NodeName),
 	}
 }
 
@@ -152,6 +190,11 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 // Autopilot nodes use the "gk3-" prefix, while Standard nodes use "gke-".
 func isAutopilotNode(nodeName string) bool {
 	return strings.HasPrefix(nodeName, "gk3-")
+}
+
+// isStandardNode returns true if the node name indicates a GKE Standard node.
+func isStandardNode(nodeName string) bool {
+	return strings.HasPrefix(nodeName, "gke-")
 }
 
 // isSpotPod detects whether a pod is running on GKE Autopilot Spot.
@@ -185,5 +228,14 @@ func NewTestPodInfo(name, namespace string, cpuMilli int64, memMB int64, startTi
 		StartTime:       startTime,
 		IsSpot:          isSpot,
 		Phase:           corev1.PodRunning,
+		IsAutopilot:     true, // default to autopilot for backward compat
 	}
+}
+
+// NewTestPodInfoOnNode creates a PodInfo for testing with an explicit node name.
+func NewTestPodInfoOnNode(name, namespace string, cpuMilli int64, memMB int64, startTime time.Time, isSpot bool, labels map[string]string, nodeName string) PodInfo {
+	pi := NewTestPodInfo(name, namespace, cpuMilli, memMB, startTime, isSpot, labels)
+	pi.NodeName = nodeName
+	pi.IsAutopilot = isAutopilotNode(nodeName)
+	return pi
 }

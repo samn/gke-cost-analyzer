@@ -13,6 +13,7 @@ const (
 	SortByTeam SortColumn = iota
 	SortByWorkload
 	SortBySubtype
+	SortByMode
 	SortByPods
 	SortByCPU
 	SortByMem
@@ -64,6 +65,8 @@ func compareByColumn(a, b cost.AggregatedCost, col SortColumn) int {
 		return compareStr(a.Key.Workload, b.Key.Workload)
 	case SortBySubtype:
 		return compareStr(a.Key.Subtype, b.Key.Subtype)
+	case SortByMode:
+		return compareStr(a.CostMode, b.CostMode)
 	case SortByPods:
 		return compareInt(a.PodCount, b.PodCount)
 	case SortByCPU:
@@ -115,10 +118,13 @@ func compareFloat(a, b float64) int {
 
 // ColumnForKey maps a number key press to a sort column.
 // Returns the column and true if the key is valid, or false otherwise.
-func ColumnForKey(key rune, showSubtype, showUtilization bool) (SortColumn, bool) {
+func ColumnForKey(key rune, showSubtype, showUtilization, showMode bool) (SortColumn, bool) {
 	cols := []SortColumn{SortByTeam, SortByWorkload}
 	if showSubtype {
 		cols = append(cols, SortBySubtype)
+	}
+	if showMode {
+		cols = append(cols, SortByMode)
 	}
 	cols = append(cols, SortByPods, SortByCPU, SortByMem, SortByCostPerHour, SortByCost)
 	if showUtilization {

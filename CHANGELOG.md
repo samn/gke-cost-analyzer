@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Standard GKE workload cost estimation via per-node proportional attribution
+- `--mode` flag (`autopilot`, `standard`, `all`; default: `all`) for selecting cost calculation mode
+- Compute Engine pricing fetched from Cloud Billing Catalog API (service ID `6F81-5844-456A`)
+- Node discovery for machine type and capacity detection
+- `cost_mode` field in BigQuery/Parquet schema to distinguish pricing models
+- MODE column in TUI `watch` display (shown when `--mode all`)
+
+### Changed
+- Default behavior now analyzes both Autopilot and standard GKE workloads (`--mode all`). Use `--mode autopilot` for previous behavior.
+- Kubernetes RBAC now requires `list` permission on `nodes` (in addition to `pods`) for standard GKE cost attribution
+
 ## [0.3.0] - 2026-03-03
 
 ### Fixed

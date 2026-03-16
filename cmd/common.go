@@ -59,6 +59,17 @@ func loadPrices(ctx context.Context) ([]pricing.Price, error) {
 	return prices, nil
 }
 
+func clusterMode() kube.ClusterMode {
+	switch mode {
+	case "autopilot":
+		return kube.ClusterModeAutopilot
+	case "standard":
+		return kube.ClusterModeStandard
+	default:
+		return kube.ClusterModeAll
+	}
+}
+
 func newPodLister() (*kube.PodLister, error) {
 	var opts []kube.PodListerOption
 	if namespace != "" {
@@ -67,7 +78,50 @@ func newPodLister() (*kube.PodLister, error) {
 	if len(excludeNamespaces) > 0 {
 		opts = append(opts, kube.WithExcludeNamespaces(excludeNamespaces))
 	}
+	opts = append(opts, kube.WithClusterMode(clusterMode()))
 	return kube.NewPodLister(opts...)
+}
+
+func newNodeLister() (*kube.NodeLister, error) {
+	return kube.NewNodeLister()
+}
+
+func loadComputePrices(ctx context.Context) ([]pricing.ComputePrice, error) {
+	cache, err := pricing.NewCache(pricing.WithCacheFileName("compute_prices.json"))
+	if err != nil {
+		return nil, fmt.Errorf("creating compute price cache: %w", err)
+	}
+
+	cached, err := cache.LoadComputePrices()
+	if err != nil {
+		return nil, fmt.Errorf("loading cached compute prices: %w", err)
+	}
+	if cached != nil {
+		return cached.Prices, nil
+	}
+
+	client, err := pricing.NewCatalogClient()
+	if err != nil {
+		return nil, fmt.Errorf("creating catalog client: %w", err)
+	}
+	prices, err := client.FetchComputePrices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetching compute prices: %w", err)
+	}
+
+	if err := cache.SaveComputePrices(prices); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to cache compute prices: %v\n", err)
+	}
+
+	return prices, nil
+}
+
+func needsStandard() bool {
+	return mode == "standard" || mode == "all"
+}
+
+func needsAutopilot() bool {
+	return mode == "autopilot" || mode == "all"
 }
 
 // gcpHTTPClientFn is the function used to create GCP-authenticated HTTP clients.

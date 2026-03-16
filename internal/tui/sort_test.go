@@ -228,7 +228,7 @@ func TestColumnForKeyWithSubtype(t *testing.T) {
 		{'8', SortByCost},
 	}
 	for _, tt := range tests {
-		col, ok := ColumnForKey(tt.key, true, false)
+		col, ok := ColumnForKey(tt.key, true, false, false)
 		if !ok {
 			t.Errorf("key %c should be valid with subtype", tt.key)
 		}
@@ -238,7 +238,7 @@ func TestColumnForKeyWithSubtype(t *testing.T) {
 	}
 
 	// Invalid key
-	_, ok := ColumnForKey('9', true, false)
+	_, ok := ColumnForKey('9', true, false, false)
 	if ok {
 		t.Error("key 9 should be invalid with subtype")
 	}
@@ -258,7 +258,7 @@ func TestColumnForKeyWithoutSubtype(t *testing.T) {
 		{'7', SortByCost},
 	}
 	for _, tt := range tests {
-		col, ok := ColumnForKey(tt.key, false, false)
+		col, ok := ColumnForKey(tt.key, false, false, false)
 		if !ok {
 			t.Errorf("key %c should be valid without subtype", tt.key)
 		}
@@ -268,7 +268,7 @@ func TestColumnForKeyWithoutSubtype(t *testing.T) {
 	}
 
 	// Key 8 is invalid without subtype
-	_, ok := ColumnForKey('8', false, false)
+	_, ok := ColumnForKey('8', false, false, false)
 	if ok {
 		t.Error("key 8 should be invalid without subtype")
 	}

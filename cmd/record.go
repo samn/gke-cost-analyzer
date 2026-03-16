@@ -10,6 +10,7 @@ import (
 
 	"github.com/samn/autopilot-cost-analyzer/internal/bigquery"
 	"github.com/samn/autopilot-cost-analyzer/internal/cost"
+	"github.com/samn/autopilot-cost-analyzer/internal/kube"
 	pqwriter "github.com/samn/autopilot-cost-analyzer/internal/parquet"
 	"github.com/samn/autopilot-cost-analyzer/internal/pricing"
 	"github.com/samn/autopilot-cost-analyzer/internal/prometheus"
@@ -37,7 +38,7 @@ func init() {
 
 var recordCmd = &cobra.Command{
 	Use:   "record",
-	Short: "Record GKE Autopilot workload costs to BigQuery",
+	Short: "Record GKE workload costs to BigQuery",
 	Long:  "Run as a daemon, periodically snapshot pod costs and write aggregated records to BigQuery.",
 	RunE:  runRecord,
 }
@@ -62,12 +63,34 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
 
-	fmt.Println("Loading prices...")
-	prices, err := loadPrices(ctx)
-	if err != nil {
-		return err
+	var autopilotCalc *cost.Calculator
+	if needsAutopilot() {
+		fmt.Println("Loading Autopilot prices...")
+		prices, err := loadPrices(ctx)
+		if err != nil {
+			return err
+		}
+		pt := pricing.FromPrices(prices)
+		autopilotCalc = cost.NewCalculator(region, pt, nil)
 	}
-	pt := pricing.FromPrices(prices)
+
+	var standardCalc *cost.StandardCalculator
+	var nodeLister *kube.NodeLister
+	if needsStandard() {
+		fmt.Println("Loading Compute Engine prices...")
+		computePrices, err := loadComputePrices(ctx)
+		if err != nil {
+			return err
+		}
+		cpt := pricing.FromComputePrices(computePrices)
+		standardCalc = cost.NewStandardCalculator(region, cpt, nil)
+
+		nl, err := newNodeLister()
+		if err != nil {
+			return fmt.Errorf("connecting to cluster for node listing: %w", err)
+		}
+		nodeLister = nl
+	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
 	lister, err := newPodLister()
@@ -99,7 +122,6 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			recordInterval, project, bqDataset, bqTable)
 	}
 
-	calc := cost.NewCalculator(region, pt, nil)
 	lc := labelConfig()
 	intervalSecs := int64(recordInterval.Seconds())
 	sc := snapshotConfig{
@@ -112,7 +134,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	defer ticker.Stop()
 
 	// Run once immediately
-	if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
+	if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
@@ -122,7 +144,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, calc, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
+			if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
 				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
 			}
 		}
@@ -136,7 +158,7 @@ type snapshotConfig struct {
 	clusterName string
 }
 
-func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
+func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister *kube.NodeLister, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
 	// Capture timestamp before listing pods so it reflects the start of the
 	// snapshot window, not the end of processing.
 	now := time.Now()
@@ -144,6 +166,15 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 	pods, err := lister.ListPods(ctx)
 	if err != nil {
 		return fmt.Errorf("listing pods: %w", err)
+	}
+
+	// Refresh nodes for standard calculator
+	if nodeLister != nil && standardCalc != nil {
+		nodes, err := nodeLister.ListNodes(ctx)
+		if err != nil {
+			return fmt.Errorf("listing nodes: %w", err)
+		}
+		standardCalc.SetNodes(nodes)
 	}
 
 	// Fetch utilization data from Prometheus if configured.
@@ -156,8 +187,10 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 		}
 	}
 
-	costs := calc.CalculateAll(pods)
-	aggs := cost.AggregateWithUtilization(costs, lc, usage)
+	// Calculate costs — partition pods by type if both calculators are set
+	allCosts := partitionAndCalculate(pods, autopilotCalc, standardCalc)
+
+	aggs := cost.AggregateWithUtilization(allCosts, lc, usage)
 
 	snapshots := make([]bigquery.CostSnapshot, len(aggs))
 	for i, a := range aggs {
@@ -194,6 +227,29 @@ func recordSnapshot(ctx context.Context, lister podLister, calc *cost.Calculator
 	return nil
 }
 
+// partitionAndCalculate computes pod costs using the appropriate calculator(s).
+func partitionAndCalculate(pods []kube.PodInfo, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) []cost.PodCost {
+	switch {
+	case autopilotCalc != nil && standardCalc != nil:
+		var autopilotPods, standardPods []kube.PodInfo
+		for _, p := range pods {
+			if p.IsAutopilot {
+				autopilotPods = append(autopilotPods, p)
+			} else {
+				standardPods = append(standardPods, p)
+			}
+		}
+		allCosts := autopilotCalc.CalculateAll(autopilotPods)
+		return append(allCosts, standardCalc.CalculateAll(standardPods)...)
+	case autopilotCalc != nil:
+		return autopilotCalc.CalculateAll(pods)
+	case standardCalc != nil:
+		return standardCalc.CalculateAll(pods)
+	default:
+		return nil
+	}
+}
+
 func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig, intervalSecs int64) bigquery.CostSnapshot {
 	// Compute cost for this interval window only, not the cumulative lifetime
 	// cost. Using the per-hour rate × interval hours ensures that
@@ -216,6 +272,7 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		TotalCost:       a.CostPerHour * intervalHours,
 		IsSpot:          a.Key.IsSpot,
 		IntervalSeconds: intervalSecs,
+		CostMode:        a.CostMode,
 	}
 	if a.HasUtilization {
 		snap.CPUUtilization = &a.CPUUtilization

@@ -1,4 +1,4 @@
-// Package cost provides cost calculation and aggregation for GKE Autopilot pods.
+// Package cost provides cost calculation and aggregation for GKE pods.
 package cost
 
 import (
@@ -21,7 +21,12 @@ type PodCost struct {
 	MemCostPerHour float64
 }
 
-// Calculator computes costs for pods given a pricing table.
+// PodCostCalculator is the interface for calculating costs for a list of pods.
+type PodCostCalculator interface {
+	CalculateAll(pods []kube.PodInfo) []PodCost
+}
+
+// Calculator computes costs for Autopilot pods given a pricing table.
 type Calculator struct {
 	prices pricing.PriceTable
 	region string

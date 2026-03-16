@@ -35,7 +35,7 @@ func TestRenderTable(t *testing.T) {
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	aggs := cost.Aggregate(costs, lc)
 
-	output := RenderTable(aggs, false, false, DefaultSort())
+	output := RenderTable(aggs, false, false, false, DefaultSort())
 
 	// Verify header is present (no SUBTYPE since showSubtype=false)
 	for _, header := range []string{"TEAM", "WORKLOAD", "PODS", "CPU REQ", "MEM REQ", "$/HR", "COST", "SPOT"} {
@@ -72,7 +72,7 @@ func TestRenderTable(t *testing.T) {
 }
 
 func TestRenderTableEmpty(t *testing.T) {
-	output := RenderTable(nil, false, false, DefaultSort())
+	output := RenderTable(nil, false, false, false, DefaultSort())
 
 	// Empty table with no data should still render something (headers + total)
 	if !strings.Contains(output, "TOTAL") {
@@ -90,7 +90,7 @@ func TestRenderTableAllColumns(t *testing.T) {
 		{Key: cost.GroupKey{Team: "alpha", Workload: "api", IsSpot: true}, PodCount: 3, CostPerHour: 0.03, TotalCost: 0.15, TotalCPUVCPU: 3.0, TotalMemGB: 6.0},
 	}
 
-	output := RenderTable(aggs, true, false, DefaultSort())
+	output := RenderTable(aggs, true, false, false, DefaultSort())
 
 	// Verify SUBTYPE header is present when showSubtype=true
 	if !strings.Contains(output, "SUBTYPE") {
@@ -120,7 +120,7 @@ func TestRenderTableMissingLabels(t *testing.T) {
 		{Key: cost.GroupKey{}, PodCount: 5, CostPerHour: 0.10},
 	}
 
-	output := RenderTable(aggs, true, false, DefaultSort())
+	output := RenderTable(aggs, true, false, false, DefaultSort())
 
 	// Missing labels should show as "-"
 	if !strings.Contains(output, "-") {
@@ -135,7 +135,7 @@ func TestRenderTableSortIndicator(t *testing.T) {
 
 	// Sort by cost descending — only COST header should have indicator
 	cfg := SortConfig{Column: SortByCost, Asc: false}
-	output := RenderTable(aggs, false, false, cfg)
+	output := RenderTable(aggs, false, false, false, cfg)
 
 	if !strings.Contains(output, "COST v") {
 		t.Errorf("expected 'COST v' indicator in output:\n%s", output)
@@ -147,7 +147,7 @@ func TestRenderTableSortIndicator(t *testing.T) {
 
 	// Sort by team ascending — TEAM header should have ^ indicator
 	cfg2 := SortConfig{Column: SortByTeam, Asc: true}
-	output2 := RenderTable(aggs, false, false, cfg2)
+	output2 := RenderTable(aggs, false, false, false, cfg2)
 
 	if !strings.Contains(output2, "TEAM ^") {
 		t.Errorf("expected 'TEAM ^' indicator in output:\n%s", output2)
@@ -164,7 +164,7 @@ func TestRenderTableSortIndicatorWithSubtype(t *testing.T) {
 	}
 
 	cfg := SortConfig{Column: SortBySubtype, Asc: true}
-	output := RenderTable(aggs, true, false, cfg)
+	output := RenderTable(aggs, true, false, false, cfg)
 
 	if !strings.Contains(output, "SUBTYPE ^") {
 		t.Errorf("expected 'SUBTYPE ^' indicator in output:\n%s", output)

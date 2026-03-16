@@ -29,6 +29,7 @@ type Row struct {
 	TotalCost         float64  `parquet:"total_cost"`
 	IsSpot            bool     `parquet:"is_spot"`
 	IntervalSeconds   int64    `parquet:"interval_seconds"`
+	CostMode          string   `parquet:"cost_mode,optional"`
 	CPUUtilization    *float64 `parquet:"cpu_utilization,optional"`
 	MemoryUtilization *float64 `parquet:"memory_utilization,optional"`
 	EfficiencyScore   *float64 `parquet:"efficiency_score,optional"`
@@ -54,6 +55,7 @@ func SnapshotToRow(s bigquery.CostSnapshot) Row {
 		TotalCost:         s.TotalCost,
 		IsSpot:            s.IsSpot,
 		IntervalSeconds:   s.IntervalSeconds,
+		CostMode:          s.CostMode,
 		CPUUtilization:    s.CPUUtilization,
 		MemoryUtilization: s.MemoryUtilization,
 		EfficiencyScore:   s.EfficiencyScore,
@@ -80,6 +82,7 @@ func RowToSnapshot(r Row) bigquery.CostSnapshot {
 		TotalCost:         r.TotalCost,
 		IsSpot:            r.IsSpot,
 		IntervalSeconds:   r.IntervalSeconds,
+		CostMode:          r.CostMode,
 		CPUUtilization:    r.CPUUtilization,
 		MemoryUtilization: r.MemoryUtilization,
 		EfficiencyScore:   r.EfficiencyScore,
