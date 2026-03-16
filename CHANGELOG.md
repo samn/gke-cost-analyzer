@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Elapsed watch duration displayed in TUI header to contextualize accumulated costs
 
 ## [0.4.0] - 2026-03-16
 
