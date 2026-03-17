@@ -244,6 +244,122 @@ func TestColumnForKeyWithSubtype(t *testing.T) {
 	}
 }
 
+func TestGroupByTeam(t *testing.T) {
+	aggs := []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2, TotalCPUVCPU: 1.0, TotalMemGB: 2.0, CostPerHour: 0.02, TotalCost: 0.10},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3, TotalCPUVCPU: 3.0, TotalMemGB: 6.0, CostPerHour: 0.03, TotalCost: 0.15},
+		{Key: cost.GroupKey{Team: "beta", Workload: "worker"}, PodCount: 1, TotalCPUVCPU: 2.0, TotalMemGB: 4.0, CostPerHour: 0.01, TotalCost: 0.05},
+	}
+
+	groups := groupByTeam(aggs)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+
+	alpha := groups[0]
+	if alpha.Team != "alpha" {
+		t.Errorf("expected first group alpha, got %s", alpha.Team)
+	}
+	if len(alpha.Workloads) != 2 {
+		t.Errorf("expected 2 workloads in alpha, got %d", len(alpha.Workloads))
+	}
+	if alpha.Summary.PodCount != 5 {
+		t.Errorf("expected alpha summary pods=5, got %d", alpha.Summary.PodCount)
+	}
+	if alpha.Summary.TotalCPUVCPU != 4.0 {
+		t.Errorf("expected alpha summary CPU=4.0, got %f", alpha.Summary.TotalCPUVCPU)
+	}
+	if alpha.Summary.CostPerHour != 0.05 {
+		t.Errorf("expected alpha summary $/HR=0.05, got %f", alpha.Summary.CostPerHour)
+	}
+
+	beta := groups[1]
+	if beta.Team != "beta" {
+		t.Errorf("expected second group beta, got %s", beta.Team)
+	}
+	if beta.Summary.PodCount != 1 {
+		t.Errorf("expected beta summary pods=1, got %d", beta.Summary.PodCount)
+	}
+}
+
+func TestGroupByTeamEmptyTeam(t *testing.T) {
+	aggs := []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "", Workload: "orphan"}, PodCount: 1},
+	}
+
+	groups := groupByTeam(aggs)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	if groups[0].Team != "-" {
+		t.Errorf("expected team '-' for empty, got %s", groups[0].Team)
+	}
+}
+
+func TestSortTeamGroups(t *testing.T) {
+	groups := []TeamGroup{
+		{Team: "beta", Summary: cost.AggregatedCost{CostPerHour: 0.01}},
+		{Team: "alpha", Summary: cost.AggregatedCost{CostPerHour: 0.05}},
+		{Team: "gamma", Summary: cost.AggregatedCost{CostPerHour: 0.03}},
+	}
+
+	// Sort by cost per hour descending
+	SortTeamGroups(groups, SortConfig{Column: SortByCostPerHour, Asc: false})
+
+	if groups[0].Team != "alpha" {
+		t.Errorf("expected alpha first (highest cost), got %s", groups[0].Team)
+	}
+	if groups[1].Team != "gamma" {
+		t.Errorf("expected gamma second, got %s", groups[1].Team)
+	}
+	if groups[2].Team != "beta" {
+		t.Errorf("expected beta last, got %s", groups[2].Team)
+	}
+}
+
+func TestSortTeamGroupsByTeamAsc(t *testing.T) {
+	groups := []TeamGroup{
+		{Team: "gamma", Summary: cost.AggregatedCost{Key: cost.GroupKey{Team: "gamma"}}},
+		{Team: "alpha", Summary: cost.AggregatedCost{Key: cost.GroupKey{Team: "alpha"}}},
+		{Team: "beta", Summary: cost.AggregatedCost{Key: cost.GroupKey{Team: "beta"}}},
+	}
+
+	SortTeamGroups(groups, SortConfig{Column: SortByTeam, Asc: true})
+
+	if groups[0].Team != "alpha" {
+		t.Errorf("expected alpha first, got %s", groups[0].Team)
+	}
+	if groups[1].Team != "beta" {
+		t.Errorf("expected beta second, got %s", groups[1].Team)
+	}
+	if groups[2].Team != "gamma" {
+		t.Errorf("expected gamma third, got %s", groups[2].Team)
+	}
+}
+
+func TestSortTeamGroupsSortsWorkloads(t *testing.T) {
+	groups := []TeamGroup{
+		{
+			Team:    "alpha",
+			Summary: cost.AggregatedCost{Key: cost.GroupKey{Team: "alpha"}},
+			Workloads: []cost.AggregatedCost{
+				{Key: cost.GroupKey{Team: "alpha", Workload: "z-svc"}, CostPerHour: 0.01},
+				{Key: cost.GroupKey{Team: "alpha", Workload: "a-svc"}, CostPerHour: 0.05},
+			},
+		},
+	}
+
+	SortTeamGroups(groups, SortConfig{Column: SortByCostPerHour, Asc: false})
+
+	// Workloads should be sorted by cost descending
+	if groups[0].Workloads[0].Key.Workload != "a-svc" {
+		t.Errorf("expected a-svc first (highest cost), got %s", groups[0].Workloads[0].Key.Workload)
+	}
+	if groups[0].Workloads[1].Key.Workload != "z-svc" {
+		t.Errorf("expected z-svc second, got %s", groups[0].Workloads[1].Key.Workload)
+	}
+}
+
 func TestColumnForKeyWithoutSubtype(t *testing.T) {
 	tests := []struct {
 		key  rune

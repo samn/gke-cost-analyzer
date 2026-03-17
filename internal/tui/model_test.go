@@ -90,6 +90,7 @@ func TestModelViewShowsElapsedTime(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 
 	view := m.View()
 	if !strings.Contains(view, "watching for 5m") {
@@ -199,6 +200,7 @@ func TestModelViewSortsResults(t *testing.T) {
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2, CostPerHour: 0.02},
 		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3, CostPerHour: 0.03},
 	}
+	m.rebuildDisplay()
 
 	view := m.View()
 
@@ -280,6 +282,7 @@ func TestModelHelpText(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 
 	view := m.View()
 
@@ -288,6 +291,12 @@ func TestModelHelpText(t *testing.T) {
 	}
 	if !strings.Contains(view, "q=Quit") {
 		t.Errorf("expected q=Quit in help text:\n%s", view)
+	}
+	if !strings.Contains(view, "Navigate") {
+		t.Errorf("expected Navigate in help text:\n%s", view)
+	}
+	if !strings.Contains(view, "Expand/Collapse") {
+		t.Errorf("expected Expand/Collapse in help text:\n%s", view)
 	}
 	// Without subtype, should not mention Subtype
 	if strings.Contains(view, "Subtype") {
@@ -313,6 +322,7 @@ func TestModelHelpTextWithSubtype(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web", Subtype: "grpc"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 
 	view := m.View()
 
@@ -354,6 +364,7 @@ func TestModelViewReflectsSortOrder(t *testing.T) {
 
 	// Sort by pods descending
 	m.sortCfg = SortConfig{Column: SortByPods, Asc: false}
+	m.rebuildDisplay()
 	view := m.View()
 
 	// zeta (5 pods) should appear before alpha (1 pod)
@@ -374,6 +385,7 @@ func TestModelSortIndicatorInView(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 
 	// Default sort is team ascending
 	view := m.View()
@@ -415,6 +427,7 @@ func TestModelViewShowsPrometheusError(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 	m.promErr = fmt.Errorf("connection refused")
 
 	view := m.View()
@@ -430,6 +443,7 @@ func TestModelViewShowsNoUtilizationData(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 	m.promErr = nil
 	m.utilPodCount = 0
 
@@ -446,6 +460,7 @@ func TestModelViewShowsUtilizationCount(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 3, HasUtilization: true},
 	}
+	m.rebuildDisplay()
 	m.promErr = nil
 	m.utilPodCount = 5
 
@@ -462,6 +477,7 @@ func TestModelViewShowsNoProjectWhenEmpty(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 	m.promErr = nil
 	m.utilPodCount = 0
 
@@ -479,6 +495,7 @@ func TestModelViewHelpTextWithUtilization(t *testing.T) {
 	m.aggs = []cost.AggregatedCost{
 		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
 	}
+	m.rebuildDisplay()
 
 	view := m.View()
 	if !strings.Contains(view, "8=CPU%") {
@@ -651,5 +668,377 @@ func TestModelUpdateSetsPromStatus(t *testing.T) {
 	}
 	if m3.utilPodCount != 3 {
 		t.Errorf("expected utilPodCount=3, got %d", m3.utilPodCount)
+	}
+}
+
+func TestModelCursorNavigation(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "beta", Workload: "api"}, PodCount: 2},
+		{Key: cost.GroupKey{Team: "gamma", Workload: "worker"}, PodCount: 3},
+	}
+	m.rebuildDisplay()
+
+	// Initial cursor at 0
+	if m.cursor != 0 {
+		t.Errorf("expected initial cursor at 0, got %d", m.cursor)
+	}
+
+	// Move down
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m2 := updated.(Model)
+	if m2.cursor != 1 {
+		t.Errorf("expected cursor at 1 after down, got %d", m2.cursor)
+	}
+
+	// Move down again
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m3 := updated.(Model)
+	if m3.cursor != 2 {
+		t.Errorf("expected cursor at 2 after second down, got %d", m3.cursor)
+	}
+
+	// Move down at bottom — should not go past last row
+	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m4 := updated.(Model)
+	if m4.cursor != 2 {
+		t.Errorf("expected cursor clamped at 2, got %d", m4.cursor)
+	}
+
+	// Move up
+	updated, _ = m4.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m5 := updated.(Model)
+	if m5.cursor != 1 {
+		t.Errorf("expected cursor at 1 after up, got %d", m5.cursor)
+	}
+
+	// Move up to top
+	updated, _ = m5.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m6 := updated.(Model)
+	if m6.cursor != 0 {
+		t.Errorf("expected cursor at 0, got %d", m6.cursor)
+	}
+
+	// Move up at top — should not go below 0
+	updated, _ = m6.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m7 := updated.(Model)
+	if m7.cursor != 0 {
+		t.Errorf("expected cursor clamped at 0, got %d", m7.cursor)
+	}
+}
+
+func TestModelCursorNavigationJK(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "beta", Workload: "api"}, PodCount: 2},
+	}
+	m.rebuildDisplay()
+
+	// j moves down
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m2 := updated.(Model)
+	if m2.cursor != 1 {
+		t.Errorf("expected cursor at 1 after j, got %d", m2.cursor)
+	}
+
+	// k moves up
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m3 := updated.(Model)
+	if m3.cursor != 0 {
+		t.Errorf("expected cursor at 0 after k, got %d", m3.cursor)
+	}
+}
+
+func TestModelExpandCollapse(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3},
+		{Key: cost.GroupKey{Team: "beta", Workload: "worker"}, PodCount: 1},
+	}
+	m.rebuildDisplay()
+
+	// Initially 2 rows (collapsed teams)
+	if len(m.displayRows) != 2 {
+		t.Fatalf("expected 2 display rows, got %d", len(m.displayRows))
+	}
+
+	// Press Enter on alpha (cursor=0) to expand
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(Model)
+
+	// Should now have 4 rows: alpha header + 2 workloads + beta header
+	if len(m2.displayRows) != 4 {
+		t.Fatalf("expected 4 display rows after expand, got %d", len(m2.displayRows))
+	}
+	if !m2.expandedTeams["alpha"] {
+		t.Error("alpha should be expanded")
+	}
+
+	// View should show workload names
+	view := m2.View()
+	if !strings.Contains(view, "web") {
+		t.Errorf("expected 'web' workload in expanded view:\n%s", view)
+	}
+	if !strings.Contains(view, "api") {
+		t.Errorf("expected 'api' workload in expanded view:\n%s", view)
+	}
+	// Expanded arrow should be visible
+	if !strings.Contains(view, "▼") {
+		t.Errorf("expected expanded arrow ▼:\n%s", view)
+	}
+
+	// Press Enter again on alpha to collapse
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m3 := updated.(Model)
+	if len(m3.displayRows) != 2 {
+		t.Fatalf("expected 2 display rows after collapse, got %d", len(m3.displayRows))
+	}
+	if m3.expandedTeams["alpha"] {
+		t.Error("alpha should be collapsed")
+	}
+}
+
+func TestModelExpandFromWorkloadRow(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3},
+	}
+	m.rebuildDisplay()
+
+	// Expand alpha
+	m.expandedTeams["alpha"] = true
+	m.rebuildDisplay()
+
+	// Move cursor to a workload row (index 1)
+	m.cursor = 1
+	if m.displayRows[1].Kind != rowWorkloadDetail {
+		t.Fatal("expected cursor on workload detail row")
+	}
+
+	// Press Enter on workload row should collapse the parent team
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(Model)
+	if m2.expandedTeams["alpha"] {
+		t.Error("pressing Enter on workload row should collapse parent team")
+	}
+}
+
+func TestModelToggleExpandAll(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3},
+		{Key: cost.GroupKey{Team: "beta", Workload: "worker"}, PodCount: 1},
+	}
+	m.rebuildDisplay()
+
+	// Press 'a' to expand all
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m2 := updated.(Model)
+
+	if !m2.expandedTeams["alpha"] || !m2.expandedTeams["beta"] {
+		t.Error("all teams should be expanded after 'a'")
+	}
+	// alpha: 1 header + 2 workloads, beta: 1 header + 1 workload = 5
+	if len(m2.displayRows) != 5 {
+		t.Errorf("expected 5 display rows when all expanded, got %d", len(m2.displayRows))
+	}
+
+	// Press 'a' again to collapse all
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m3 := updated.(Model)
+
+	if m3.expandedTeams["alpha"] || m3.expandedTeams["beta"] {
+		t.Error("all teams should be collapsed after second 'a'")
+	}
+	if len(m3.displayRows) != 2 {
+		t.Errorf("expected 2 display rows when all collapsed, got %d", len(m3.displayRows))
+	}
+}
+
+func TestModelToggleGroupMode(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 2, CostPerHour: 0.02, TotalCost: 0.10},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 3, CostPerHour: 0.03, TotalCost: 0.15},
+		{Key: cost.GroupKey{Team: "beta", Workload: "worker"}, PodCount: 1, CostPerHour: 0.01, TotalCost: 0.05},
+	}
+	m.rebuildDisplay()
+
+	// Default is grouped mode
+	if !m.grouped {
+		t.Fatal("expected grouped mode by default")
+	}
+	// Should have 2 team summary rows (collapsed)
+	if len(m.displayRows) != 2 {
+		t.Fatalf("expected 2 display rows in grouped mode, got %d", len(m.displayRows))
+	}
+
+	// Press 'g' to switch to flat mode
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m2 := updated.(Model)
+
+	if m2.grouped {
+		t.Error("expected flat mode after pressing g")
+	}
+	// Should have 3 flat workload rows
+	if len(m2.displayRows) != 3 {
+		t.Fatalf("expected 3 display rows in flat mode, got %d", len(m2.displayRows))
+	}
+	// All rows should be rowFlat
+	for i, dr := range m2.displayRows {
+		if dr.Kind != rowFlat {
+			t.Errorf("expected rowFlat at index %d, got %v", i, dr.Kind)
+		}
+	}
+
+	// View should show both team and workload columns
+	view := m2.View()
+	if !strings.Contains(view, "alpha") {
+		t.Errorf("expected team 'alpha' in flat view:\n%s", view)
+	}
+	if !strings.Contains(view, "web") {
+		t.Errorf("expected workload 'web' in flat view:\n%s", view)
+	}
+	if !strings.Contains(view, "beta") {
+		t.Errorf("expected team 'beta' in flat view:\n%s", view)
+	}
+
+	// Press 'g' again to switch back to grouped mode
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	m3 := updated.(Model)
+
+	if !m3.grouped {
+		t.Error("expected grouped mode after pressing g again")
+	}
+	if len(m3.displayRows) != 2 {
+		t.Fatalf("expected 2 display rows back in grouped mode, got %d", len(m3.displayRows))
+	}
+}
+
+func TestModelFlatModeSortsByCost(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "cheap"}, PodCount: 1, CostPerHour: 0.01},
+		{Key: cost.GroupKey{Team: "beta", Workload: "expensive"}, PodCount: 1, CostPerHour: 0.10},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "medium"}, PodCount: 1, CostPerHour: 0.05},
+	}
+
+	// Switch to flat mode and sort by cost descending
+	m.grouped = false
+	m.sortCfg = SortConfig{Column: SortByCostPerHour, Asc: false}
+	m.rebuildDisplay()
+
+	if len(m.displayRows) != 3 {
+		t.Fatalf("expected 3 display rows, got %d", len(m.displayRows))
+	}
+	// Should be sorted: expensive, medium, cheap (regardless of team)
+	if m.displayRows[0].Agg.Key.Workload != "expensive" {
+		t.Errorf("expected expensive first, got %s", m.displayRows[0].Agg.Key.Workload)
+	}
+	if m.displayRows[1].Agg.Key.Workload != "medium" {
+		t.Errorf("expected medium second, got %s", m.displayRows[1].Agg.Key.Workload)
+	}
+	if m.displayRows[2].Agg.Key.Workload != "cheap" {
+		t.Errorf("expected cheap third, got %s", m.displayRows[2].Agg.Key.Workload)
+	}
+}
+
+func TestModelFlatModeHelpText(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.grouped = false
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+	}
+	m.rebuildDisplay()
+
+	view := m.View()
+	if !strings.Contains(view, "g=Grouped") {
+		t.Errorf("expected 'g=Grouped' in flat mode help text:\n%s", view)
+	}
+	if strings.Contains(view, "Expand/Collapse") {
+		t.Errorf("should not show Expand/Collapse in flat mode:\n%s", view)
+	}
+}
+
+func TestModelGroupedModeHelpText(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+	}
+	m.rebuildDisplay()
+
+	view := m.View()
+	if !strings.Contains(view, "g=Flat") {
+		t.Errorf("expected 'g=Flat' in grouped mode help text:\n%s", view)
+	}
+	if !strings.Contains(view, "Expand/Collapse") {
+		t.Errorf("expected Expand/Collapse in grouped mode help:\n%s", view)
+	}
+}
+
+func TestModelFlatModeExpandNoOp(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.grouped = false
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 2},
+	}
+	m.rebuildDisplay()
+
+	// Enter in flat mode should be a no-op
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 := updated.(Model)
+	if len(m2.displayRows) != 2 {
+		t.Errorf("expected display rows unchanged after enter in flat mode, got %d", len(m2.displayRows))
+	}
+
+	// 'a' in flat mode should also be a no-op
+	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m3 := updated.(Model)
+	if len(m3.displayRows) != 2 {
+		t.Errorf("expected display rows unchanged after 'a' in flat mode, got %d", len(m3.displayRows))
+	}
+}
+
+func TestModelExpandSpaceKey(t *testing.T) {
+	lister := &mockPodLister{}
+	m := testModel(lister)
+	m.lastUpdate = time.Now()
+	m.aggs = []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "alpha", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "alpha", Workload: "api"}, PodCount: 2},
+	}
+	m.rebuildDisplay()
+
+	// Space should also expand
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m2 := updated.(Model)
+	if !m2.expandedTeams["alpha"] {
+		t.Error("space key should expand team")
 	}
 }

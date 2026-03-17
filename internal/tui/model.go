@@ -50,6 +50,13 @@ type Model struct {
 	showUtilization bool
 	showMode        bool // show MODE column (when in "all" mode)
 
+	// Team drill-down state.
+	grouped       bool            // true = team-grouped view, false = flat workload view
+	expandedTeams map[string]bool // which teams are expanded (grouped mode only)
+	cursor        int             // selected display row index
+	displayRows   []DisplayRow    // current display rows (recomputed on data/expand changes)
+	teamGroups    []TeamGroup     // current team groups (recomputed on data changes)
+
 	// Prometheus status (displayed in header when utilization is enabled).
 	promErr      error  // last Prometheus fetch error (nil = OK)
 	utilPodCount int    // number of pods with utilization data
@@ -84,6 +91,8 @@ func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, 
 		promClient:      promClient,
 		promProject:     promProject,
 		startedAt:       time.Now(),
+		grouped:         true,
+		expandedTeams:   make(map[string]bool),
 	}
 }
 
@@ -108,7 +117,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.sortCfg = SortConfig{Column: col, Asc: true}
 				}
+				m.rebuildDisplay()
 			}
+			return m, nil
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+			return m, nil
+		case "down", "j":
+			if m.cursor < len(m.displayRows)-1 {
+				m.cursor++
+			}
+			return m, nil
+		case "enter", " ":
+			if m.grouped {
+				m.toggleExpand()
+			}
+			return m, nil
+		case "a":
+			if m.grouped {
+				m.toggleExpandAll()
+			}
+			return m, nil
+		case "g":
+			m.grouped = !m.grouped
+			m.rebuildDisplay()
+			m.clampCursor()
 			return m, nil
 		}
 
@@ -119,6 +154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promErr = msg.promErr
 		m.utilPodCount = msg.utilPodCount
 		m.lastUpdate = time.Now()
+		m.rebuildDisplay()
 		return m, m.scheduleTick
 
 	case errMsg:
@@ -130,6 +166,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// toggleExpand expands or collapses the team at the cursor.
+func (m *Model) toggleExpand() {
+	if m.cursor < 0 || m.cursor >= len(m.displayRows) {
+		return
+	}
+	dr := m.displayRows[m.cursor]
+	var teamName string
+	switch dr.Kind {
+	case rowTeamSummary:
+		teamName = dr.TeamName
+	case rowWorkloadDetail:
+		// Find the parent team by walking backward.
+		for i := m.cursor - 1; i >= 0; i-- {
+			if m.displayRows[i].Kind == rowTeamSummary {
+				teamName = m.displayRows[i].TeamName
+				break
+			}
+		}
+	}
+	if teamName == "" {
+		return
+	}
+	m.expandedTeams[teamName] = !m.expandedTeams[teamName]
+	m.displayRows = buildDisplayRows(m.teamGroups, m.expandedTeams)
+	m.clampCursor()
+}
+
+// toggleExpandAll expands all teams if any are collapsed, or collapses all if all are expanded.
+func (m *Model) toggleExpandAll() {
+	allExpanded := true
+	for _, g := range m.teamGroups {
+		if !m.expandedTeams[g.Team] {
+			allExpanded = false
+			break
+		}
+	}
+	for _, g := range m.teamGroups {
+		m.expandedTeams[g.Team] = !allExpanded
+	}
+	m.displayRows = buildDisplayRows(m.teamGroups, m.expandedTeams)
+	m.clampCursor()
+}
+
+// rebuildDisplay re-sorts, re-groups, and rebuilds display rows from current aggs.
+func (m *Model) rebuildDisplay() {
+	sorted := make([]cost.AggregatedCost, len(m.aggs))
+	copy(sorted, m.aggs)
+	SortAggs(sorted, m.sortCfg)
+
+	if m.grouped {
+		m.teamGroups = groupByTeam(sorted)
+		SortTeamGroups(m.teamGroups, m.sortCfg)
+		m.displayRows = buildDisplayRows(m.teamGroups, m.expandedTeams)
+	} else {
+		m.teamGroups = nil
+		m.displayRows = buildFlatDisplayRows(sorted)
+	}
+}
+
+// clampCursor ensures the cursor is within the valid display row range.
+func (m *Model) clampCursor() {
+	if m.cursor >= len(m.displayRows) {
+		m.cursor = len(m.displayRows) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
 }
 
 // View renders the TUI.
@@ -161,14 +266,9 @@ func (m Model) View() string {
 		}
 	}
 
-	// Sort a copy so we don't mutate the stored data.
-	sorted := make([]cost.AggregatedCost, len(m.aggs))
-	copy(sorted, m.aggs)
-	SortAggs(sorted, m.sortCfg)
-
 	help := m.helpText()
 
-	return header + "\n\n" + RenderTable(sorted, m.showSubtype, m.showUtilization, m.showMode, m.sortCfg) + "\n\n" + help + "\n"
+	return header + "\n\n" + RenderTable(m.displayRows, m.showSubtype, m.showUtilization, m.showMode, m.sortCfg, m.cursor) + "\n\n" + help + "\n"
 }
 
 // fetchCosts fetches pod data and calculates costs.
@@ -227,6 +327,15 @@ func (m Model) helpText() string {
 		}
 		help += fmt.Sprintf(" %d=%s", key, name)
 		keyIdx++
+	}
+	help += " · ↑↓=Navigate"
+	if m.grouped {
+		help += " Enter=Expand/Collapse a=Toggle All"
+	}
+	if m.grouped {
+		help += " g=Flat"
+	} else {
+		help += " g=Grouped"
 	}
 	help += " · q=Quit"
 	return help
