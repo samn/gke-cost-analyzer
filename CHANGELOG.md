@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flat/grouped view toggle (`g` key): grouped mode sorts at team level with nested workloads; flat mode sorts all workloads individually regardless of team
 - Horizontal separator line before the TOTAL row in the `watch` TUI table
 - TOTAL row now includes total pod count, CPU requests, and memory requests
+- Upgrade to go 1.26.1
 
 ## [0.4.0] - 2026-03-16
 
