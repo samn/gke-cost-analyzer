@@ -5,10 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-- Release binaries are now gzip-compressed for faster downloads
+## [0.5.0] - 2026-03-17
 
 ### Changed
 - Renamed project from `autopilot-cost-analyzer` to `gke-cost-analyzer` to reflect support for both Autopilot and Standard GKE workloads
@@ -16,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Binary name changed from `autopilot-cost-analyzer` to `gke-cost-analyzer`
 - Cache directory changed from `~/.cache/autopilot-cost-analyzer/` to `~/.cache/gke-cost-analyzer/`
 - Default BigQuery dataset name changed from `autopilot_costs` to `gke_costs`
+- Upgrade to go 1.26.1
+- Release binaries are now gzip-compressed for faster downloads
 
 ### Added
 - Cost aberration detection in `watch` TUI: tracks per-workload cost trends using EWMA and highlights sudden deviations while tolerating normal cyclical patterns (autoscaling)
@@ -27,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Flat/grouped view toggle (`g` key): grouped mode sorts at team level with nested workloads; flat mode sorts all workloads individually regardless of team
 - Horizontal separator line before the TOTAL row in the `watch` TUI table
 - TOTAL row now includes total pod count, CPU requests, and memory requests
-- Upgrade to go 1.26.1
 
 ## [0.4.0] - 2026-03-16
 
