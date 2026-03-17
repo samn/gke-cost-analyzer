@@ -672,6 +672,46 @@ func TestAggregateWithUtilizationCPUBurst(t *testing.T) {
 	}
 }
 
+func TestComputeEfficiencyFullUtilization(t *testing.T) {
+	// When both CPU and memory are at 100%, efficiency should be 1.0
+	eff := computeEfficiency(1.0, 1.0, 0.10, 0.05, 0.15)
+	if !approxEqual(eff, 1.0, 1e-9) {
+		t.Errorf("efficiency = %f, want 1.0 for full utilization", eff)
+	}
+}
+
+func TestComputeEfficiencyBurstCapped(t *testing.T) {
+	// When CPU is > 1.0 (burst), it should be capped at 1.0 for the efficiency
+	// calculation, preventing efficiency > 1.0
+	eff := computeEfficiency(2.0, 1.0, 0.10, 0.05, 0.15)
+	if !approxEqual(eff, 1.0, 1e-9) {
+		t.Errorf("efficiency = %f, want 1.0 when both resources capped at 100%%", eff)
+	}
+
+	// Memory burst also capped
+	eff = computeEfficiency(1.0, 1.5, 0.10, 0.05, 0.15)
+	if !approxEqual(eff, 1.0, 1e-9) {
+		t.Errorf("efficiency = %f, want 1.0 when mem burst capped", eff)
+	}
+}
+
+func TestComputeEfficiencyZeroTotalCost(t *testing.T) {
+	eff := computeEfficiency(0.5, 0.5, 0, 0, 0)
+	if eff != 0 {
+		t.Errorf("efficiency = %f, want 0 for zero total cost", eff)
+	}
+}
+
+func TestComputeEfficiencyCostWeighting(t *testing.T) {
+	// CPU dominates: cpuCost=0.90, memCost=0.10, total=1.0
+	// CPU util=0.8, mem util=0.2
+	// Expected: (0.8*0.90 + 0.2*0.10) / 1.0 = 0.72 + 0.02 = 0.74
+	eff := computeEfficiency(0.8, 0.2, 0.90, 0.10, 1.0)
+	if !approxEqual(eff, 0.74, 0.001) {
+		t.Errorf("efficiency = %f, want 0.74", eff)
+	}
+}
+
 func TestAggregateWithUtilizationZeroCost(t *testing.T) {
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 

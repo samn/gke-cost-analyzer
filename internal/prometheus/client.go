@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -197,6 +198,11 @@ func (c *Client) instantQuery(ctx context.Context, query, nsLabel, podLabel stri
 
 		val, err := strconv.ParseFloat(strVal, 64)
 		if err != nil {
+			continue
+		}
+		// Skip NaN/Inf values — they would propagate through arithmetic
+		// and corrupt utilization calculations.
+		if math.IsNaN(val) || math.IsInf(val, 0) {
 			continue
 		}
 

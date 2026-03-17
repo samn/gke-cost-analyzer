@@ -704,6 +704,144 @@ func TestRecordSnapshotParquetOutput(t *testing.T) {
 	}
 }
 
+func TestAggregatedToSnapshotCostMode(t *testing.T) {
+	sc := snapshotConfig{projectID: "proj", region: "r", clusterName: "c"}
+
+	agg := cost.AggregatedCost{
+		Key:      cost.GroupKey{Team: "t", Workload: "w", CostMode: "standard"},
+		CostMode: "standard",
+	}
+
+	snap := aggregatedToSnapshot(agg, time.Now(), sc, 300)
+	if snap.CostMode != "standard" {
+		t.Errorf("CostMode = %s, want standard", snap.CostMode)
+	}
+
+	// Autopilot mode
+	agg.CostMode = "autopilot"
+	snap = aggregatedToSnapshot(agg, time.Now(), sc, 300)
+	if snap.CostMode != "autopilot" {
+		t.Errorf("CostMode = %s, want autopilot", snap.CostMode)
+	}
+}
+
+func TestAggregatedToSnapshotUtilizationFields(t *testing.T) {
+	sc := snapshotConfig{projectID: "proj", region: "r", clusterName: "c"}
+
+	// With utilization data
+	agg := cost.AggregatedCost{
+		Key:               cost.GroupKey{Team: "t", Workload: "w"},
+		CostPerHour:       1.0,
+		CPUCostPerHour:    0.6,
+		MemCostPerHour:    0.4,
+		HasUtilization:    true,
+		CPUUtilization:    0.75,
+		MemUtilization:    0.50,
+		EfficiencyScore:   0.65,
+		WastedCostPerHour: 0.35,
+	}
+
+	snap := aggregatedToSnapshot(agg, time.Now(), sc, 3600) // 1 hour interval
+
+	if snap.CPUUtilization == nil || *snap.CPUUtilization != 0.75 {
+		t.Errorf("CPUUtilization = %v, want 0.75", snap.CPUUtilization)
+	}
+	if snap.MemoryUtilization == nil || *snap.MemoryUtilization != 0.50 {
+		t.Errorf("MemoryUtilization = %v, want 0.50", snap.MemoryUtilization)
+	}
+	if snap.EfficiencyScore == nil || *snap.EfficiencyScore != 0.65 {
+		t.Errorf("EfficiencyScore = %v, want 0.65", snap.EfficiencyScore)
+	}
+	// WastedCost = WastedCostPerHour × intervalHours = 0.35 × 1.0 = 0.35
+	if snap.WastedCost == nil || *snap.WastedCost != 0.35 {
+		t.Errorf("WastedCost = %v, want 0.35", snap.WastedCost)
+	}
+
+	// Without utilization data — all nullable fields should be nil
+	agg.HasUtilization = false
+	snap = aggregatedToSnapshot(agg, time.Now(), sc, 3600)
+
+	if snap.CPUUtilization != nil {
+		t.Error("CPUUtilization should be nil when HasUtilization is false")
+	}
+	if snap.MemoryUtilization != nil {
+		t.Error("MemoryUtilization should be nil when HasUtilization is false")
+	}
+	if snap.EfficiencyScore != nil {
+		t.Error("EfficiencyScore should be nil when HasUtilization is false")
+	}
+	if snap.WastedCost != nil {
+		t.Error("WastedCost should be nil when HasUtilization is false")
+	}
+}
+
+func TestNeedsStandard(t *testing.T) {
+	saved := mode
+	defer func() { mode = saved }()
+
+	tests := []struct {
+		mode string
+		want bool
+	}{
+		{"standard", true},
+		{"all", true},
+		{"autopilot", false},
+	}
+
+	for _, tt := range tests {
+		mode = tt.mode
+		if got := needsStandard(); got != tt.want {
+			t.Errorf("needsStandard() with mode=%q = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestNeedsAutopilot(t *testing.T) {
+	saved := mode
+	defer func() { mode = saved }()
+
+	tests := []struct {
+		mode string
+		want bool
+	}{
+		{"autopilot", true},
+		{"all", true},
+		{"standard", false},
+	}
+
+	for _, tt := range tests {
+		mode = tt.mode
+		if got := needsAutopilot(); got != tt.want {
+			t.Errorf("needsAutopilot() with mode=%q = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestClusterMode(t *testing.T) {
+	saved := mode
+	defer func() { mode = saved }()
+
+	mode = "autopilot"
+	if got := clusterMode(); got != kube.ClusterModeAutopilot {
+		t.Errorf("clusterMode() = %v, want ClusterModeAutopilot", got)
+	}
+
+	mode = "standard"
+	if got := clusterMode(); got != kube.ClusterModeStandard {
+		t.Errorf("clusterMode() = %v, want ClusterModeStandard", got)
+	}
+
+	mode = "all"
+	if got := clusterMode(); got != kube.ClusterModeAll {
+		t.Errorf("clusterMode() = %v, want ClusterModeAll", got)
+	}
+
+	mode = "something-else"
+	if got := clusterMode(); got != kube.ClusterModeAll {
+		t.Errorf("clusterMode() with unknown mode = %v, want ClusterModeAll", got)
+	}
+}
+
 func TestRecordSnapshotParquetAppends(t *testing.T) {
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-1 * time.Hour)

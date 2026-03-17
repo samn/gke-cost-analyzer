@@ -305,4 +305,88 @@ func TestSnapshotToRow(t *testing.T) {
 			t.Errorf("field %s = %v (%T), want %v (%T)", key, got, got, want, want)
 		}
 	}
+
+	// Nullable fields should be absent when not set
+	for _, key := range []string{"cost_mode", "cpu_utilization", "memory_utilization", "efficiency_score", "wasted_cost"} {
+		if _, ok := row[key]; ok {
+			t.Errorf("nullable field %s should be absent when not set", key)
+		}
+	}
+}
+
+func TestSnapshotToRowWithNullableFields(t *testing.T) {
+	cpuUtil := 0.75
+	memUtil := 0.50
+	efficiency := 0.65
+	wastedCost := 0.042
+
+	s := CostSnapshot{
+		Timestamp:         time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC),
+		ProjectID:         "proj",
+		CostMode:          "autopilot",
+		CPUUtilization:    &cpuUtil,
+		MemoryUtilization: &memUtil,
+		EfficiencyScore:   &efficiency,
+		WastedCost:        &wastedCost,
+	}
+
+	row := snapshotToRow(s)
+
+	if row["cost_mode"] != "autopilot" {
+		t.Errorf("cost_mode = %v, want autopilot", row["cost_mode"])
+	}
+	if row["cpu_utilization"] != 0.75 {
+		t.Errorf("cpu_utilization = %v, want 0.75", row["cpu_utilization"])
+	}
+	if row["memory_utilization"] != 0.50 {
+		t.Errorf("memory_utilization = %v, want 0.50", row["memory_utilization"])
+	}
+	if row["efficiency_score"] != 0.65 {
+		t.Errorf("efficiency_score = %v, want 0.65", row["efficiency_score"])
+	}
+	if row["wasted_cost"] != 0.042 {
+		t.Errorf("wasted_cost = %v, want 0.042", row["wasted_cost"])
+	}
+}
+
+func TestSnapshotToRowCostModeEmptyOmitted(t *testing.T) {
+	s := CostSnapshot{
+		Timestamp: time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC),
+		CostMode:  "",
+	}
+
+	row := snapshotToRow(s)
+	if _, ok := row["cost_mode"]; ok {
+		t.Error("cost_mode should be omitted when empty")
+	}
+}
+
+func TestInsertIDIncludesCostMode(t *testing.T) {
+	var receivedBody insertAllRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(insertAllResponse{})
+	}))
+	defer srv.Close()
+
+	writer := NewWriter("proj", "ds", "tbl", WithWriterBaseURL(srv.URL))
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	snapshots := []CostSnapshot{
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "alpha", Workload: "svc1", CostMode: "autopilot"},
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "alpha", Workload: "svc1", CostMode: "standard"},
+	}
+
+	err := writer.Write(context.Background(), snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if receivedBody.Rows[0].InsertID == receivedBody.Rows[1].InsertID {
+		t.Error("rows with different cost_mode must have different InsertIDs")
+	}
 }

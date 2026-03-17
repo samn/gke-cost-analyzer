@@ -145,6 +145,95 @@ func TestListNodesEmpty(t *testing.T) {
 	}
 }
 
+func TestListNodesZeroAllocatable(t *testing.T) {
+	// Node with zero allocatable resources should still be included
+	// (with a log warning), not silently dropped.
+	nodes := []runtime.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gke-cluster-pool-zerores",
+				Labels: map[string]string{
+					"node.kubernetes.io/instance-type": "n2-standard-4",
+				},
+			},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					// No CPU or memory set → zero values
+				},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(nodes...)
+	nl, err := NewNodeLister(WithNodeClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := nl.ListNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 node (with zero resources), got %d", len(result))
+	}
+
+	n := result[0]
+	if n.VCPU != 0 {
+		t.Errorf("VCPU = %f, want 0", n.VCPU)
+	}
+	if n.MemoryGB != 0 {
+		t.Errorf("MemoryGB = %f, want 0", n.MemoryGB)
+	}
+	if n.MachineFamily != "n2" {
+		t.Errorf("family = %s, want n2", n.MachineFamily)
+	}
+}
+
+func TestListNodesMissingLabels(t *testing.T) {
+	// Node without instance-type label should get empty machine type/family.
+	nodes := []runtime.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "gke-cluster-pool-nolabel",
+				Labels: map[string]string{},
+			},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("2"),
+					corev1.ResourceMemory: resource.MustParse("8Gi"),
+				},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(nodes...)
+	nl, err := NewNodeLister(WithNodeClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := nl.ListNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(result))
+	}
+
+	if result[0].MachineType != "" {
+		t.Errorf("machine type = %s, want empty", result[0].MachineType)
+	}
+	if result[0].MachineFamily != "" {
+		t.Errorf("machine family = %s, want empty", result[0].MachineFamily)
+	}
+	if result[0].IsSpot {
+		t.Error("should not be spot without the label")
+	}
+}
+
 func TestParseMachineFamily(t *testing.T) {
 	tests := []struct {
 		machineType    string

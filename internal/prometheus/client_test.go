@@ -226,7 +226,7 @@ func TestFetchUsageSkipsMissingLabels(t *testing.T) {
 	}
 }
 
-func TestFetchUsageSkipsInvalidValues(t *testing.T) {
+func TestFetchUsageSkipsNaNValues(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(promResponse{
@@ -235,8 +235,16 @@ func TestFetchUsageSkipsInvalidValues(t *testing.T) {
 				ResultType: "vector",
 				Result: []promResult{
 					{
-						Metric: map[string]string{"namespace": "default", "pod": "bad-val"},
+						Metric: map[string]string{"namespace": "default", "pod": "nan-val"},
 						Value:  []any{1234567890.0, "NaN"},
+					},
+					{
+						Metric: map[string]string{"namespace": "default", "pod": "inf-val"},
+						Value:  []any{1234567890.0, "+Inf"},
+					},
+					{
+						Metric: map[string]string{"namespace": "default", "pod": "neg-inf-val"},
+						Value:  []any{1234567890.0, "-Inf"},
 					},
 					{
 						Metric: map[string]string{"namespace": "default", "pod": "good-val"},
@@ -254,9 +262,13 @@ func TestFetchUsageSkipsInvalidValues(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// NaN is technically parseable by ParseFloat, so both should appear
-	if len(usage) != 2 {
-		t.Fatalf("expected 2 pods, got %d", len(usage))
+	// NaN and Inf values should be filtered out to prevent corruption
+	// of downstream utilization calculations.
+	if len(usage) != 1 {
+		t.Fatalf("expected 1 pod (NaN/Inf filtered), got %d", len(usage))
+	}
+	if _, ok := usage[PodKey{Namespace: "default", Pod: "good-val"}]; !ok {
+		t.Error("expected good-val in results")
 	}
 }
 

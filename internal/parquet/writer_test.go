@@ -267,6 +267,167 @@ func TestSchemaFieldCountInSync(t *testing.T) {
 	}
 }
 
+func TestSnapshotToRowAndBackWithUtilization(t *testing.T) {
+	ts := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	cpuUtil := 0.75
+	memUtil := 0.50
+	efficiency := 0.65
+	wastedCost := 0.042
+
+	snap := bigquery.CostSnapshot{
+		Timestamp:         ts,
+		ProjectID:         "test-project",
+		Region:            "us-central1",
+		ClusterName:       "test-cluster",
+		Namespace:         "default",
+		Team:              "platform",
+		Workload:          "web",
+		PodCount:          3,
+		CPURequestVCPU:    1.5,
+		MemoryRequestGB:   3.0,
+		CPUCost:           0.105,
+		MemoryCost:        0.024,
+		TotalCost:         0.129,
+		IsSpot:            false,
+		IntervalSeconds:   300,
+		CostMode:          "autopilot",
+		CPUUtilization:    &cpuUtil,
+		MemoryUtilization: &memUtil,
+		EfficiencyScore:   &efficiency,
+		WastedCost:        &wastedCost,
+	}
+
+	row := SnapshotToRow(snap)
+
+	if row.CostMode != "autopilot" {
+		t.Errorf("cost_mode = %s, want autopilot", row.CostMode)
+	}
+	if row.CPUUtilization == nil || *row.CPUUtilization != 0.75 {
+		t.Errorf("cpu_utilization = %v, want 0.75", row.CPUUtilization)
+	}
+	if row.MemoryUtilization == nil || *row.MemoryUtilization != 0.50 {
+		t.Errorf("memory_utilization = %v, want 0.50", row.MemoryUtilization)
+	}
+	if row.EfficiencyScore == nil || *row.EfficiencyScore != 0.65 {
+		t.Errorf("efficiency_score = %v, want 0.65", row.EfficiencyScore)
+	}
+	if row.WastedCost == nil || *row.WastedCost != 0.042 {
+		t.Errorf("wasted_cost = %v, want 0.042", row.WastedCost)
+	}
+
+	// Round-trip back
+	back := RowToSnapshot(row)
+	if back.CostMode != "autopilot" {
+		t.Errorf("round-trip cost_mode = %s, want autopilot", back.CostMode)
+	}
+	if back.CPUUtilization == nil || *back.CPUUtilization != 0.75 {
+		t.Errorf("round-trip cpu_utilization = %v, want 0.75", back.CPUUtilization)
+	}
+	if back.MemoryUtilization == nil || *back.MemoryUtilization != 0.50 {
+		t.Errorf("round-trip memory_utilization = %v, want 0.50", back.MemoryUtilization)
+	}
+	if back.EfficiencyScore == nil || *back.EfficiencyScore != 0.65 {
+		t.Errorf("round-trip efficiency_score = %v, want 0.65", back.EfficiencyScore)
+	}
+	if back.WastedCost == nil || *back.WastedCost != 0.042 {
+		t.Errorf("round-trip wasted_cost = %v, want 0.042", back.WastedCost)
+	}
+}
+
+func TestSnapshotToRowNilUtilization(t *testing.T) {
+	ts := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	snap := bigquery.CostSnapshot{
+		Timestamp: ts,
+		ProjectID: "test-project",
+		PodCount:  1,
+	}
+
+	row := SnapshotToRow(snap)
+	if row.CPUUtilization != nil {
+		t.Error("expected nil cpu_utilization")
+	}
+	if row.MemoryUtilization != nil {
+		t.Error("expected nil memory_utilization")
+	}
+	if row.EfficiencyScore != nil {
+		t.Error("expected nil efficiency_score")
+	}
+	if row.WastedCost != nil {
+		t.Error("expected nil wasted_cost")
+	}
+
+	back := RowToSnapshot(row)
+	if back.CPUUtilization != nil {
+		t.Error("round-trip: expected nil cpu_utilization")
+	}
+	if back.EfficiencyScore != nil {
+		t.Error("round-trip: expected nil efficiency_score")
+	}
+}
+
+func TestAppendToFileWithUtilizationFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "util.parquet")
+
+	ts := time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC)
+	cpuUtil := 0.80
+	memUtil := 0.60
+	efficiency := 0.72
+	wastedCost := 0.035
+
+	snap := bigquery.CostSnapshot{
+		Timestamp:         ts,
+		ProjectID:         "proj",
+		Region:            "us-central1",
+		ClusterName:       "cluster",
+		Namespace:         "default",
+		Team:              "platform",
+		Workload:          "web",
+		PodCount:          2,
+		CPURequestVCPU:    1.0,
+		MemoryRequestGB:   2.0,
+		CPUCost:           0.07,
+		MemoryCost:        0.008,
+		TotalCost:         0.078,
+		IsSpot:            false,
+		IntervalSeconds:   300,
+		CostMode:          "standard",
+		CPUUtilization:    &cpuUtil,
+		MemoryUtilization: &memUtil,
+		EfficiencyScore:   &efficiency,
+		WastedCost:        &wastedCost,
+	}
+
+	if err := AppendToFile(path, []bigquery.CostSnapshot{snap}); err != nil {
+		t.Fatalf("AppendToFile: %v", err)
+	}
+
+	got, err := ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(got))
+	}
+
+	g := got[0]
+	if g.CostMode != "standard" {
+		t.Errorf("cost_mode = %s, want standard", g.CostMode)
+	}
+	if g.CPUUtilization == nil || *g.CPUUtilization != 0.80 {
+		t.Errorf("cpu_utilization = %v, want 0.80", g.CPUUtilization)
+	}
+	if g.MemoryUtilization == nil || *g.MemoryUtilization != 0.60 {
+		t.Errorf("memory_utilization = %v, want 0.60", g.MemoryUtilization)
+	}
+	if g.EfficiencyScore == nil || *g.EfficiencyScore != 0.72 {
+		t.Errorf("efficiency_score = %v, want 0.72", g.EfficiencyScore)
+	}
+	if g.WastedCost == nil || *g.WastedCost != 0.035 {
+		t.Errorf("wasted_cost = %v, want 0.035", g.WastedCost)
+	}
+}
+
 func TestAppendToFileCorruptFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "corrupt.parquet")
