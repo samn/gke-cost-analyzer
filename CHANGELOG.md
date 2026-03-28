@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Dockerfile now builds from source using a multi-stage Go build instead of downloading a pre-built binary from GitHub Releases
+- Release workflow builds and pushes a Docker image to `ghcr.io/samn/gke-cost-analyzer` on each tagged release (tagged with version and `latest`)
+
 ## [0.5.0] - 2026-03-17
 
 ### Changed

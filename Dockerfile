@@ -1,14 +1,14 @@
-FROM alpine:3 AS fetch
-ARG VERSION=latest
-RUN apk add --no-cache curl jq \
- && if [ "$VERSION" = "latest" ]; then \
-      VERSION=$(curl -fsSL https://api.github.com/repos/samn/gke-cost-analyzer/releases/latest | jq -r .tag_name); \
-    fi \
- && curl -fsSL \
-      "https://github.com/samn/gke-cost-analyzer/releases/download/${VERSION}/gke-cost-analyzer-linux-amd64.gz" \
-    | gunzip > /gke-cost-analyzer \
- && chmod +x /gke-cost-analyzer
+FROM golang:1.26-alpine AS build
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath \
+    -ldflags "-s -w -X 'github.com/samn/gke-cost-analyzer/cmd.version=${VERSION}'" \
+    -o /gke-cost-analyzer .
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=fetch /gke-cost-analyzer /usr/local/bin/gke-cost-analyzer
+COPY --from=build /gke-cost-analyzer /usr/local/bin/gke-cost-analyzer
 ENTRYPOINT ["gke-cost-analyzer"]
