@@ -70,6 +70,9 @@ jobs:
           files: dist/*
           generate_release_notes: false
 
+      - name: Decompress binary for Docker image
+        run: gunzip -k dist/gke-cost-analyzer-linux-amd64.gz
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -85,7 +88,6 @@ jobs:
         with:
           context: .
           push: true
-          build-args: VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:latest

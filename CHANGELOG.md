@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- Dockerfile now builds from source using a multi-stage Go build instead of downloading a pre-built binary from GitHub Releases
-- Release workflow builds and pushes a Docker image to `ghcr.io/samn/gke-cost-analyzer` on each tagged release (tagged with version and `latest`)
+- Dockerfile now copies a pre-built binary instead of downloading from GitHub Releases at build time
+- Release workflow builds and pushes a Docker image to `ghcr.io/samn/gke-cost-analyzer` on each tagged release (tagged with version and `latest`), reusing the same binary from the release artifacts
 
 ## [0.5.0] - 2026-03-17
 
