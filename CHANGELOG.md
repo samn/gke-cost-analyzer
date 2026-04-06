@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `history` command: query BigQuery for historical cost data and display in an interactive TUI with sparkline trend visualizations
+  - Duration argument supports hours (`3h`), days (`3d`), and weeks (`1w`)
+  - Adaptive time bucketing for sparklines (5min to 1day based on range)
+  - Same interactive features as `watch`: team grouping, expand/collapse, sorting, cursor navigation
+  - Optional filters: `--cluster-name`, `--namespace`, `--team`, `--dataset`, `--table`
+  - Displays total spend, average $/hr, average pod count, CPU/memory requests
+  - Utilization columns (CPU%, MEM%, WASTE) shown when data is available
+- BigQuery read support via REST API for querying historical cost snapshots
+- Unicode sparkline rendering for inline trend visualization
+
 ### Changed
 - Upgraded Bubble Tea from v1 (`github.com/charmbracelet/bubbletea`) to v2 (`charm.land/bubbletea/v2`) with declarative view model
 - Upgraded Lip Gloss from v1 (`github.com/charmbracelet/lipgloss`) to v2 (`charm.land/lipgloss/v2`)

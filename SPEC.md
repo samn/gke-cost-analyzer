@@ -70,6 +70,38 @@ Utilization metrics are automatically fetched from GCP Managed Prometheus
 snapshot. If the fetch fails, the snapshot proceeds without utilization data (a
 warning is logged to stderr).
 
+### `history`
+Query BigQuery for historical cost snapshots recorded by the `record` command
+and display aggregated data in an interactive BubbleTea TUI with sparkline
+trend visualizations.
+
+Usage: `gke-cost-analyzer history <duration>`
+
+Duration format: `3h` (hours), `3d` (days), `1w` (weeks).
+
+Flags: `--project` (required, global), `--dataset` (default `gke_costs`),
+`--table` (default `cost_snapshots`), `--cluster-name` (optional filter),
+`--namespace` (global, optional filter), `--team` (optional filter).
+
+The command executes two BigQuery queries:
+1. **Aggregated costs**: groups by team/workload/subtype/cost_mode, computing
+   total spend, average $/hr, average pod count, CPU/memory requests, and
+   utilization metrics (when available).
+2. **Time-bucketed costs**: groups by workload and time bucket for sparkline
+   rendering. Bucket size adapts to the time range (5min for ≤6h, 30min for
+   ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
+
+The TUI displays columns: TEAM, WORKLOAD, [SUBTYPE], [MODE], AVG PODS,
+AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and optionally
+CPU%, MEM%, WASTE when utilization data is present.
+
+Interactive features match the `watch` command: team grouping with
+expand/collapse (Enter/a), flat/grouped toggle (g), column sorting (1-9,0),
+cursor navigation (↑↓/jk), quit (q).
+
+Sparklines use Unicode block characters (▁▂▃▄▅▆▇█) to show cost trends
+inline in the table, scaled per-workload from min to max bucket cost.
+
 ### `setup`
 Create the BigQuery dataset and table with the correct schema, partitioning,
 and clustering configuration.
