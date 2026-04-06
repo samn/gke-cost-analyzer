@@ -56,8 +56,8 @@ func buildFlatHistoryDisplayRows(rows []bigquery.HistoryCostRow) []HistoryDispla
 }
 
 // RenderHistoryTable renders the history cost data as a formatted table string.
-func RenderHistoryTable(displayRows []HistoryDisplayRow, showSubtype, showUtilization, showMode bool, sortCfg HistorySortConfig, cursor int, sparklines map[bigquery.WorkloadKey]string) string {
-	vis := ColumnVisibility{Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
+func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtype, showUtilization, showMode bool, sortCfg HistorySortConfig, cursor int, sparklines map[bigquery.WorkloadKey]string) string {
+	vis := ColumnVisibility{Cluster: showCluster, Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
 	defs := historyVisibleColumns(vis)
 
 	rows := make([][]string, 0, len(displayRows)+2)
@@ -74,10 +74,13 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showSubtype, showUtiliz
 				arrow = "▼"
 			}
 			r := dr.Row
-			row = []string{
+			if showCluster {
+				row = append(row, "")
+			}
+			row = append(row,
 				dr.TeamName,
 				fmt.Sprintf("%d workloads %s", dr.WorkloadCount, arrow),
-			}
+			)
 			if showSubtype {
 				row = append(row, "")
 			}
@@ -104,11 +107,11 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showSubtype, showUtiliz
 			totalWaste += r.TotalWastedCost
 
 		case rowWorkloadDetail:
-			row = buildHistoryWorkloadRow(dr.Row, "", showSubtype, showMode, showUtilization, sparklines)
+			row = buildHistoryWorkloadRow(dr.Row, "", showCluster, showSubtype, showMode, showUtilization, sparklines)
 
 		case rowFlat:
 			r := dr.Row
-			row = buildHistoryWorkloadRow(r, orDefault(r.Team, "-"), showSubtype, showMode, showUtilization, sparklines)
+			row = buildHistoryWorkloadRow(r, orDefault(r.Team, "-"), showCluster, showSubtype, showMode, showUtilization, sparklines)
 			totalAvgPods += r.AvgPods
 			totalAvgCPU += r.AvgCPUVCPU
 			totalAvgMem += r.AvgMemoryGB
@@ -128,7 +131,11 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showSubtype, showUtiliz
 	rows = append(rows, sepRow)
 
 	// Total row
-	totalRow := []string{"TOTAL", ""}
+	var totalRow []string
+	if showCluster {
+		totalRow = append(totalRow, "")
+	}
+	totalRow = append(totalRow, "TOTAL", "")
 	if showSubtype {
 		totalRow = append(totalRow, "")
 	}
@@ -198,15 +205,19 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showSubtype, showUtiliz
 }
 
 // buildHistoryWorkloadRow creates a table row for a single history workload.
-func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, showSubtype, showMode, showUtilization bool, sparklines map[bigquery.WorkloadKey]string) []string {
+func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, showCluster, showSubtype, showMode, showUtilization bool, sparklines map[bigquery.WorkloadKey]string) []string {
 	spot := ""
 	if r.HasSpot {
 		spot = "yes"
 	}
-	row := []string{
+	var row []string
+	if showCluster {
+		row = append(row, orDefault(r.ClusterName, "-"))
+	}
+	row = append(row,
 		teamCol,
 		orDefault(r.Workload, "-"),
-	}
+	)
 	if showSubtype {
 		row = append(row, orDefault(r.Subtype, "-"))
 	}

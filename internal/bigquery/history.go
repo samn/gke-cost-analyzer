@@ -4,6 +4,7 @@ import "time"
 
 // HistoryCostRow holds aggregated cost data for a workload over a time range.
 type HistoryCostRow struct {
+	ClusterName     string
 	Team            string
 	Workload        string
 	Subtype         string
@@ -25,19 +26,21 @@ type HistoryCostRow struct {
 
 // WorkloadKey identifies a workload for sparkline lookup.
 type WorkloadKey struct {
-	Team     string
-	Workload string
-	Subtype  string
-	CostMode string
+	ClusterName string
+	Team        string
+	Workload    string
+	Subtype     string
+	CostMode    string
 }
 
 // KeyFromRow returns the WorkloadKey for a HistoryCostRow.
 func KeyFromRow(r HistoryCostRow) WorkloadKey {
 	return WorkloadKey{
-		Team:     r.Team,
-		Workload: r.Workload,
-		Subtype:  r.Subtype,
-		CostMode: r.CostMode,
+		ClusterName: r.ClusterName,
+		Team:        r.Team,
+		Workload:    r.Workload,
+		Subtype:     r.Subtype,
+		CostMode:    r.CostMode,
 	}
 }
 

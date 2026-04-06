@@ -28,7 +28,7 @@ func (m *mockFetcher) QueryTimeSeries(_ context.Context, _ time.Time, _ int64, _
 
 func testHistoryModel(fetcher HistoryDataFetcher) HistoryModel {
 	ctx, cancel := context.WithCancel(context.Background())
-	return NewHistoryModel(ctx, cancel, fetcher, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, false, false)
+	return NewHistoryModel(ctx, cancel, fetcher, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, false, false, false)
 }
 
 func TestHistoryModelInitialView(t *testing.T) {
@@ -342,5 +342,62 @@ func TestHistoryModelToggleExpandAll(t *testing.T) {
 	m = updated.(HistoryModel)
 	if len(m.displayRows) != 2 {
 		t.Fatalf("expected 2 collapsed rows, got %d", len(m.displayRows))
+	}
+}
+
+func TestHistoryModelAllClusters(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, true, false, false)
+
+	if !m.showCluster {
+		t.Error("showCluster should be true")
+	}
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{ClusterName: "prod", Team: "platform", Workload: "web", TotalCost: 10},
+			{ClusterName: "staging", Team: "data", Workload: "etl", TotalCost: 2},
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	// Switch to flat mode so cluster names are visible in rows
+	updated, _ = hm.Update(tea.KeyPressMsg{Code: 'g'})
+	hm = updated.(HistoryModel)
+
+	view := hm.View().Content
+	if !strings.Contains(view, "CLUSTER") {
+		t.Error("view should contain CLUSTER header when showCluster=true")
+	}
+	if !strings.Contains(view, "prod") {
+		t.Error("view should contain prod cluster name")
+	}
+	if !strings.Contains(view, "staging") {
+		t.Error("view should contain staging cluster name")
+	}
+}
+
+func TestHistoryModelSingleClusterHeader(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	filters := bigquery.QueryFilters{ClusterName: "my-cluster"}
+	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, filters, false, false, false)
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{ClusterName: "my-cluster", Team: "a", Workload: "svc1", TotalCost: 5},
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	view := hm.View().Content
+	if !strings.Contains(view, "cluster: my-cluster") {
+		t.Errorf("view should show cluster in header when filtering single cluster, got:\n%s", view)
+	}
+	if strings.Contains(view, "CLUSTER") {
+		t.Error("view should NOT contain CLUSTER column header when showCluster=false")
 	}
 }

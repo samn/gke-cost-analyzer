@@ -33,6 +33,7 @@ type HistoryModel struct {
 	loading    bool
 
 	sortCfg        HistorySortConfig
+	showCluster    bool
 	showSubtype    bool
 	showMode       bool
 	hasUtilization bool
@@ -56,7 +57,7 @@ type HistoryModel struct {
 }
 
 // NewHistoryModel creates a new history TUI model.
-func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher HistoryDataFetcher, timeRange time.Duration, bucketSecs int64, filters bigquery.QueryFilters, showSubtype, showMode bool) HistoryModel {
+func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher HistoryDataFetcher, timeRange time.Duration, bucketSecs int64, filters bigquery.QueryFilters, showCluster, showSubtype, showMode bool) HistoryModel {
 	return HistoryModel{
 		loading:       true,
 		fetcher:       fetcher,
@@ -67,6 +68,7 @@ func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher His
 		ctx:           ctx,
 		cancel:        cancel,
 		sortCfg:       DefaultHistorySort(),
+		showCluster:   showCluster,
 		showSubtype:   showSubtype,
 		showMode:      showMode,
 		grouped:       true,
@@ -89,7 +91,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 			key := rune(msg.String()[0])
-			if col, ok := HistoryColumnForKey(key, m.showSubtype, m.hasUtilization, m.showMode); ok {
+			if col, ok := HistoryColumnForKey(key, m.showCluster, m.showSubtype, m.hasUtilization, m.showMode); ok {
 				if col == m.sortCfg.Column {
 					m.sortCfg.Asc = !m.sortCfg.Asc
 				} else {
@@ -185,9 +187,12 @@ func (m HistoryModel) View() tea.View {
 
 	header := fmt.Sprintf("GKE Cost Analyzer — History (%s) — $%.2f total — %d workloads",
 		formatDuration(m.timeRange), m.totalCost, m.workloadCount)
+	if !m.showCluster && m.filters.ClusterName != "" {
+		header += fmt.Sprintf(" — cluster: %s", m.filters.ClusterName)
+	}
 
 	help := m.helpText()
-	result := header + "\n\n" + RenderHistoryTable(m.displayRows, m.showSubtype, m.hasUtilization, m.showMode, m.sortCfg, m.cursor, m.sparklines) + "\n\n" + help + "\n"
+	result := header + "\n\n" + RenderHistoryTable(m.displayRows, m.showCluster, m.showSubtype, m.hasUtilization, m.showMode, m.sortCfg, m.cursor, m.sparklines) + "\n\n" + help + "\n"
 
 	v := tea.NewView(result)
 	v.AltScreen = true
@@ -274,7 +279,7 @@ func (m *HistoryModel) toggleExpandAll() {
 }
 
 func (m HistoryModel) helpText() string {
-	vis := ColumnVisibility{Subtype: m.showSubtype, Mode: m.showMode, Utilization: m.hasUtilization}
+	vis := ColumnVisibility{Cluster: m.showCluster, Subtype: m.showSubtype, Mode: m.showMode, Utilization: m.hasUtilization}
 	defs := historyVisibleColumns(vis)
 
 	help := "Sort:"

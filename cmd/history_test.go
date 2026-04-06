@@ -67,3 +67,78 @@ func TestHistoryCommandRequiresProject(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestHistoryAllClustersWithClusterNameError(t *testing.T) {
+	oldProject := project
+	project = "test-project"
+	defer func() { project = oldProject }()
+
+	oldCluster := historyCluster
+	historyCluster = "some-cluster"
+	defer func() { historyCluster = oldCluster }()
+
+	oldAllClusters := historyAllClusters
+	historyAllClusters = true
+	defer func() { historyAllClusters = oldAllClusters }()
+
+	err := runHistory(historyCmd, []string{"3d"})
+	if err == nil {
+		t.Fatal("expected error when --all-clusters used with --cluster-name")
+	}
+	if err.Error() != "cannot use --all-clusters with --cluster-name" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestHistoryClusterFilterLogic(t *testing.T) {
+	// When historyCluster is set, it should override auto-detected clusterName
+	oldCluster := clusterName
+	oldHistCluster := historyCluster
+	oldAllClusters := historyAllClusters
+	defer func() {
+		clusterName = oldCluster
+		historyCluster = oldHistCluster
+		historyAllClusters = oldAllClusters
+	}()
+
+	// Simulate auto-detected cluster
+	clusterName = "auto-detected"
+	historyCluster = ""
+	historyAllClusters = false
+
+	// Default: uses auto-detected
+	filterCluster := clusterName
+	if historyCluster != "" {
+		filterCluster = historyCluster
+	}
+	if historyAllClusters {
+		filterCluster = ""
+	}
+	if filterCluster != "auto-detected" {
+		t.Errorf("default should use auto-detected cluster, got %q", filterCluster)
+	}
+
+	// Explicit --cluster-name overrides
+	historyCluster = "explicit"
+	filterCluster = clusterName
+	if historyCluster != "" {
+		filterCluster = historyCluster
+	}
+	if filterCluster != "explicit" {
+		t.Errorf("explicit should override, got %q", filterCluster)
+	}
+
+	// --all-clusters clears filter
+	historyAllClusters = true
+	historyCluster = ""
+	filterCluster = clusterName
+	if historyCluster != "" {
+		filterCluster = historyCluster
+	}
+	if historyAllClusters {
+		filterCluster = ""
+	}
+	if filterCluster != "" {
+		t.Errorf("--all-clusters should clear filter, got %q", filterCluster)
+	}
+}

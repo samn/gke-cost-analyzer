@@ -80,20 +80,30 @@ Usage: `gke-cost-analyzer history <duration>`
 Duration format: `3h` (hours), `3d` (days), `1w` (weeks).
 
 Flags: `--project` (required, global), `--dataset` (default `gke_costs`),
-`--table` (default `cost_snapshots`), `--cluster-name` (optional filter),
+`--table` (default `cost_snapshots`), `--cluster-name` (optional filter,
+defaults to auto-detected cluster), `--all-clusters` (query all clusters),
 `--namespace` (global, optional filter), `--team` (optional filter).
 
-The command executes two BigQuery queries:
-1. **Aggregated costs**: groups by team/workload/subtype/cost_mode, computing
-   total spend, average $/hr, average pod count, CPU/memory requests, and
-   utilization metrics (when available).
-2. **Time-bucketed costs**: groups by workload and time bucket for sparkline
-   rendering. Bucket size adapts to the time range (5min for ≤6h, 30min for
-   ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
+**Cluster filtering**: By default, the `history` command filters to the
+auto-detected cluster (from kubeconfig or GCE metadata), consistent with other
+commands. Use `--cluster-name` to filter to a specific cluster, or
+`--all-clusters` to query data from all clusters. Using `--all-clusters` adds
+a sortable CLUSTER column to the TUI. The two flags are mutually exclusive.
 
-The TUI displays columns: TEAM, WORKLOAD, [SUBTYPE], [MODE], AVG PODS,
-AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and optionally
-CPU%, MEM%, WASTE when utilization data is present.
+The command executes two BigQuery queries (both always include `cluster_name`
+in SELECT and GROUP BY to distinguish rows from different clusters):
+1. **Aggregated costs**: groups by cluster_name/team/workload/subtype/cost_mode,
+   computing total spend, average $/hr, average pod count, CPU/memory requests,
+   and utilization metrics (when available).
+2. **Time-bucketed costs**: groups by cluster_name/workload and time bucket for
+   sparkline rendering. Bucket size adapts to the time range (5min for ≤6h,
+   30min for ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
+
+The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [SUBTYPE], [MODE],
+AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and
+optionally CPU%, MEM%, WASTE when utilization data is present. The CLUSTER
+column is shown when `--all-clusters` is used. When filtering to a single
+cluster, the cluster name is displayed in the header instead.
 
 Interactive features match the `watch` command: team grouping with
 expand/collapse (Enter/a), flat/grouped toggle (g), column sorting (1-9,0),

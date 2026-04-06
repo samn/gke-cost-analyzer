@@ -15,15 +15,19 @@ import (
 )
 
 var (
-	historyDataset string
-	historyTable   string
-	historyTeam    string
+	historyDataset     string
+	historyTable       string
+	historyTeam        string
+	historyCluster     string
+	historyAllClusters bool
 )
 
 func init() {
 	historyCmd.Flags().StringVar(&historyDataset, "dataset", "gke_costs", "BigQuery dataset name")
 	historyCmd.Flags().StringVar(&historyTable, "table", "cost_snapshots", "BigQuery table name")
 	historyCmd.Flags().StringVar(&historyTeam, "team", "", "Filter by team name")
+	historyCmd.Flags().StringVar(&historyCluster, "cluster-name", "", "Filter by cluster name (defaults to auto-detected cluster)")
+	historyCmd.Flags().BoolVar(&historyAllClusters, "all-clusters", false, "Show costs from all clusters")
 	rootCmd.AddCommand(historyCmd)
 }
 
@@ -38,6 +42,10 @@ var historyCmd = &cobra.Command{
 func runHistory(cmd *cobra.Command, args []string) error {
 	if project == "" {
 		return fmt.Errorf("--project is required for the history command")
+	}
+
+	if historyAllClusters && historyCluster != "" {
+		return fmt.Errorf("cannot use --all-clusters with --cluster-name")
 	}
 
 	duration, err := parseHistoryDuration(args[0])
@@ -59,17 +67,28 @@ func runHistory(cmd *cobra.Command, args []string) error {
 
 	bucketSecs := bigquery.BucketSeconds(duration)
 
+	// Resolve cluster filter: --all-clusters clears filter, --cluster-name
+	// overrides auto-detection, otherwise use auto-detected cluster.
+	filterCluster := clusterName // auto-detected default
+	if historyCluster != "" {
+		filterCluster = historyCluster
+	}
+	if historyAllClusters {
+		filterCluster = ""
+	}
+
 	filters := bigquery.QueryFilters{
-		ClusterName: clusterName,
+		ClusterName: filterCluster,
 		Namespace:   namespace,
 		Team:        historyTeam,
 	}
 
 	lc := labelConfig()
+	showCluster := historyAllClusters
 	showSubtype := lc.SubtypeLabel != ""
 	showMode := mode == "all"
 
-	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, showSubtype, showMode)
+	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, showCluster, showSubtype, showMode)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

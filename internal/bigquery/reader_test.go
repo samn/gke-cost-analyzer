@@ -60,6 +60,7 @@ func TestQueryAggregatedCosts(t *testing.T) {
 			TotalRows:   "1",
 			Schema: responseSchema{
 				Fields: []responseField{
+					{Name: "cluster_name", Type: "STRING"},
 					{Name: "team", Type: "STRING"},
 					{Name: "workload", Type: "STRING"},
 					{Name: "subtype", Type: "STRING"},
@@ -81,23 +82,24 @@ func TestQueryAggregatedCosts(t *testing.T) {
 			},
 			Rows: []responseRow{
 				{F: []responseCell{
-					{V: "platform"},  // team
-					{V: "web"},       // workload
-					{V: "api"},       // subtype
-					{V: "default"},   // namespace
-					{V: "autopilot"}, // cost_mode
-					{V: "true"},      // has_spot
-					{V: "3.5"},       // avg_pods
-					{V: "1.5"},       // avg_cpu
-					{V: "4.0"},       // avg_mem
-					{V: "12.50"},     // total_cost
-					{V: "8.00"},      // total_cpu_cost
-					{V: "4.50"},      // total_mem_cost
-					{V: "0.52"},      // avg_cost_per_hour
-					{V: "2.10"},      // total_wasted
-					{V: "0.75"},      // avg_cpu_util
-					{V: "0.50"},      // avg_mem_util
-					{V: "0.65"},      // avg_efficiency
+					{V: "prod-cluster"}, // cluster_name
+					{V: "platform"},     // team
+					{V: "web"},          // workload
+					{V: "api"},          // subtype
+					{V: "default"},      // namespace
+					{V: "autopilot"},    // cost_mode
+					{V: "true"},         // has_spot
+					{V: "3.5"},          // avg_pods
+					{V: "1.5"},          // avg_cpu
+					{V: "4.0"},          // avg_mem
+					{V: "12.50"},        // total_cost
+					{V: "8.00"},         // total_cpu_cost
+					{V: "4.50"},         // total_mem_cost
+					{V: "0.52"},         // avg_cost_per_hour
+					{V: "2.10"},         // total_wasted
+					{V: "0.75"},         // avg_cpu_util
+					{V: "0.50"},         // avg_mem_util
+					{V: "0.65"},         // avg_efficiency
 				}},
 			},
 		}
@@ -126,6 +128,9 @@ func TestQueryAggregatedCosts(t *testing.T) {
 	}
 
 	r := rows[0]
+	if r.ClusterName != "prod-cluster" {
+		t.Errorf("cluster_name = %s, want prod-cluster", r.ClusterName)
+	}
 	if r.Team != "platform" {
 		t.Errorf("team = %s, want platform", r.Team)
 	}
@@ -202,6 +207,7 @@ func TestQueryAggregatedCostsNullUtilization(t *testing.T) {
 			TotalRows:   "1",
 			Rows: []responseRow{
 				{F: []responseCell{
+					{V: "my-cluster"},
 					{V: "team1"}, {V: "svc1"}, {V: nil}, {V: "ns"},
 					{V: "autopilot"}, {V: "false"},
 					{V: "2.0"}, {V: "1.0"}, {V: "2.0"},
@@ -254,15 +260,15 @@ func TestQueryTimeSeries(t *testing.T) {
 			TotalRows:   "3",
 			Rows: []responseRow{
 				{F: []responseCell{
-					{V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
 					{V: "1.7050464e+09"}, {V: "0.50"},
 				}},
 				{F: []responseCell{
-					{V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
 					{V: "1.7050500e+09"}, {V: "0.75"},
 				}},
 				{F: []responseCell{
-					{V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
 					{V: "1.7050536e+09"}, {V: "1.00"},
 				}},
 			},
@@ -282,6 +288,9 @@ func TestQueryTimeSeries(t *testing.T) {
 		t.Fatalf("expected 3 points, got %d", len(points))
 	}
 
+	if points[0].Key.ClusterName != "prod-cluster" {
+		t.Errorf("cluster_name = %s, want prod-cluster", points[0].Key.ClusterName)
+	}
 	if points[0].Key.Team != "platform" || points[0].Key.Workload != "web" {
 		t.Errorf("unexpected key: %+v", points[0].Key)
 	}
@@ -341,6 +350,26 @@ func TestQueryEmptyResults(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("expected 0 rows, got %d", len(rows))
+	}
+}
+
+func TestBuildFilterClause(t *testing.T) {
+	// Empty filters — no clause
+	got := buildFilterClause(QueryFilters{})
+	if got != "" {
+		t.Errorf("empty filters should produce empty clause, got %q", got)
+	}
+
+	// Single cluster filter
+	got = buildFilterClause(QueryFilters{ClusterName: "prod"})
+	if !strings.Contains(got, "cluster_name = 'prod'") {
+		t.Errorf("single cluster filter expected, got %q", got)
+	}
+
+	// All filters
+	got = buildFilterClause(QueryFilters{ClusterName: "prod", Namespace: "default", Team: "platform"})
+	if !strings.Contains(got, "cluster_name = 'prod'") || !strings.Contains(got, "namespace = 'default'") || !strings.Contains(got, "team = 'platform'") {
+		t.Errorf("all filters expected, got %q", got)
 	}
 }
 
