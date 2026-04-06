@@ -67,3 +67,50 @@ func TestHistoryCommandRequiresProject(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
+
+func TestHistoryAllClustersWithClusterNameError(t *testing.T) {
+	oldProject := project
+	project = "test-project"
+	defer func() { project = oldProject }()
+
+	oldCluster := historyCluster
+	historyCluster = "some-cluster"
+	defer func() { historyCluster = oldCluster }()
+
+	oldAllClusters := historyAllClusters
+	historyAllClusters = true
+	defer func() { historyAllClusters = oldAllClusters }()
+
+	err := runHistory(historyCmd, []string{"3d"})
+	if err == nil {
+		t.Fatal("expected error when --all-clusters used with --cluster-name")
+	}
+	if err.Error() != "cannot use --all-clusters with --cluster-name" {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveClusterFilter(t *testing.T) {
+	tests := []struct {
+		name         string
+		autoDetected string
+		explicit     string
+		allClusters  bool
+		want         string
+	}{
+		{"default uses auto-detected", "auto-detected", "", false, "auto-detected"},
+		{"explicit overrides auto-detected", "auto-detected", "explicit", false, "explicit"},
+		{"all-clusters clears filter", "auto-detected", "", true, ""},
+		{"all-clusters overrides explicit", "auto-detected", "explicit", true, ""},
+		{"no auto-detection and no flags queries all", "", "", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveClusterFilter(tt.autoDetected, tt.explicit, tt.allClusters)
+			if got != tt.want {
+				t.Errorf("resolveClusterFilter(%q, %q, %v) = %q, want %q",
+					tt.autoDetected, tt.explicit, tt.allClusters, got, tt.want)
+			}
+		})
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/samn/gke-cost-analyzer/internal/bigquery"
 )
@@ -32,10 +33,8 @@ type HistoryModel struct {
 	err        error
 	loading    bool
 
-	sortCfg        HistorySortConfig
-	showSubtype    bool
-	showMode       bool
-	hasUtilization bool
+	sortCfg HistorySortConfig
+	vis     ColumnVisibility
 
 	grouped       bool
 	expandedTeams map[string]bool
@@ -56,7 +55,7 @@ type HistoryModel struct {
 }
 
 // NewHistoryModel creates a new history TUI model.
-func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher HistoryDataFetcher, timeRange time.Duration, bucketSecs int64, filters bigquery.QueryFilters, showSubtype, showMode bool) HistoryModel {
+func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher HistoryDataFetcher, timeRange time.Duration, bucketSecs int64, filters bigquery.QueryFilters, vis ColumnVisibility) HistoryModel {
 	return HistoryModel{
 		loading:       true,
 		fetcher:       fetcher,
@@ -67,8 +66,7 @@ func NewHistoryModel(ctx context.Context, cancel context.CancelFunc, fetcher His
 		ctx:           ctx,
 		cancel:        cancel,
 		sortCfg:       DefaultHistorySort(),
-		showSubtype:   showSubtype,
-		showMode:      showMode,
+		vis:           vis,
 		grouped:       true,
 		expandedTeams: make(map[string]bool),
 	}
@@ -89,7 +87,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 			key := rune(msg.String()[0])
-			if col, ok := HistoryColumnForKey(key, m.showSubtype, m.hasUtilization, m.showMode); ok {
+			if col, ok := HistoryColumnForKey(key, m.vis); ok {
 				if col == m.sortCfg.Column {
 					m.sortCfg.Asc = !m.sortCfg.Asc
 				} else {
@@ -132,7 +130,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if any rows have utilization data
 		for _, r := range m.rows {
 			if r.AvgCPUUtil != nil {
-				m.hasUtilization = true
+				m.vis.Utilization = true
 				break
 			}
 		}
@@ -185,9 +183,12 @@ func (m HistoryModel) View() tea.View {
 
 	header := fmt.Sprintf("GKE Cost Analyzer — History (%s) — $%.2f total — %d workloads",
 		formatDuration(m.timeRange), m.totalCost, m.workloadCount)
+	if !m.vis.Cluster && m.filters.ClusterName != "" {
+		header += fmt.Sprintf(" — cluster: %s", m.filters.ClusterName)
+	}
 
 	help := m.helpText()
-	result := header + "\n\n" + RenderHistoryTable(m.displayRows, m.showSubtype, m.hasUtilization, m.showMode, m.sortCfg, m.cursor, m.sparklines) + "\n\n" + help + "\n"
+	result := header + "\n\n" + RenderHistoryTable(m.displayRows, m.vis, m.sortCfg, m.cursor, m.sparklines) + "\n\n" + help + "\n"
 
 	v := tea.NewView(result)
 	v.AltScreen = true
@@ -196,16 +197,26 @@ func (m HistoryModel) View() tea.View {
 
 // fetchHistory fetches data from BigQuery.
 func (m HistoryModel) fetchHistory() tea.Msg {
-	rows, err := m.fetcher.QueryAggregatedCosts(m.ctx, m.since, m.filters)
-	if err != nil {
-		return historyErrMsg{fmt.Errorf("querying costs: %w", err)}
-	}
+	g, ctx := errgroup.WithContext(m.ctx)
 
-	series, err := m.fetcher.QueryTimeSeries(m.ctx, m.since, m.bucketSecs, m.filters)
-	if err != nil {
-		return historyErrMsg{fmt.Errorf("querying time series: %w", err)}
-	}
+	var rows []bigquery.HistoryCostRow
+	var series []bigquery.TimeSeriesPoint
 
+	g.Go(func() error {
+		var err error
+		rows, err = m.fetcher.QueryAggregatedCosts(ctx, m.since, m.filters)
+		return err
+	})
+
+	g.Go(func() error {
+		var err error
+		series, err = m.fetcher.QueryTimeSeries(ctx, m.since, m.bucketSecs, m.filters)
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
+		return historyErrMsg{err}
+	}
 	return historyDataMsg{rows: rows, series: series}
 }
 
@@ -274,8 +285,7 @@ func (m *HistoryModel) toggleExpandAll() {
 }
 
 func (m HistoryModel) helpText() string {
-	vis := ColumnVisibility{Subtype: m.showSubtype, Mode: m.showMode, Utilization: m.hasUtilization}
-	defs := historyVisibleColumns(vis)
+	defs := historyVisibleColumns(m.vis)
 
 	help := "Sort:"
 	keyIdx := 0

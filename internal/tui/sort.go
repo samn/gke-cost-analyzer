@@ -41,6 +41,7 @@ type columnDef struct {
 
 // ColumnVisibility controls which optional columns are shown.
 type ColumnVisibility struct {
+	Cluster     bool
 	Subtype     bool
 	Mode        bool
 	Utilization bool

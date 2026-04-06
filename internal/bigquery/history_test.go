@@ -7,28 +7,33 @@ import (
 
 func TestKeyFromRow(t *testing.T) {
 	row := HistoryCostRow{
-		Team:     "platform",
-		Workload: "web",
-		Subtype:  "api",
-		CostMode: "autopilot",
+		ClusterName: "prod-cluster",
+		Team:        "platform",
+		Workload:    "web",
+		Subtype:     "api",
+		CostMode:    "autopilot",
 	}
 	key := KeyFromRow(row)
-	if key.Team != "platform" || key.Workload != "web" || key.Subtype != "api" || key.CostMode != "autopilot" {
+	if key.ClusterName != "prod-cluster" || key.Team != "platform" || key.Workload != "web" || key.Subtype != "api" || key.CostMode != "autopilot" {
 		t.Errorf("KeyFromRow mismatch: %+v", key)
 	}
 }
 
 func TestWorkloadKeyMapEquality(t *testing.T) {
-	k1 := WorkloadKey{Team: "a", Workload: "b", Subtype: "c", CostMode: "autopilot"}
-	k2 := WorkloadKey{Team: "a", Workload: "b", Subtype: "c", CostMode: "autopilot"}
-	k3 := WorkloadKey{Team: "a", Workload: "b", Subtype: "d", CostMode: "autopilot"}
+	k1 := WorkloadKey{ClusterName: "c1", Team: "a", Workload: "b", Subtype: "c", CostMode: "autopilot"}
+	k2 := WorkloadKey{ClusterName: "c1", Team: "a", Workload: "b", Subtype: "c", CostMode: "autopilot"}
+	k3 := WorkloadKey{ClusterName: "c1", Team: "a", Workload: "b", Subtype: "d", CostMode: "autopilot"}
+	k4 := WorkloadKey{ClusterName: "c2", Team: "a", Workload: "b", Subtype: "c", CostMode: "autopilot"}
 
 	m := map[WorkloadKey]int{k1: 1}
 	if m[k2] != 1 {
 		t.Error("identical WorkloadKeys should map to same entry")
 	}
 	if m[k3] != 0 {
-		t.Error("different WorkloadKeys should not collide")
+		t.Error("different WorkloadKeys (subtype) should not collide")
+	}
+	if m[k4] != 0 {
+		t.Error("different WorkloadKeys (cluster) should not collide")
 	}
 }
 

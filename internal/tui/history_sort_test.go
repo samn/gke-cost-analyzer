@@ -110,18 +110,18 @@ func TestSortHistoryTeamGroups(t *testing.T) {
 
 func TestHistoryColumnForKey(t *testing.T) {
 	// Default columns: TEAM(1), WORKLOAD(2), PODS(3), CPU(4), MEM(5), $/HR(6), TOTAL(7), WASTE not shown
-	col, ok := HistoryColumnForKey('1', false, false, false)
+	col, ok := HistoryColumnForKey('1', ColumnVisibility{})
 	if !ok || col != HistSortByTeam {
 		t.Errorf("key '1' should map to team, got %d ok=%v", col, ok)
 	}
 
-	col, ok = HistoryColumnForKey('7', false, false, false)
+	col, ok = HistoryColumnForKey('7', ColumnVisibility{})
 	if !ok || col != HistSortByTotalCost {
 		t.Errorf("key '7' should map to total cost, got %d ok=%v", col, ok)
 	}
 
 	// Invalid key
-	_, ok = HistoryColumnForKey('9', false, false, false)
+	_, ok = HistoryColumnForKey('9', ColumnVisibility{})
 	if ok {
 		t.Error("key '9' should be out of range without utilization columns")
 	}
@@ -171,6 +171,42 @@ func TestHistoryVisibleColumnsDefault(t *testing.T) {
 		if h != expected[i] {
 			t.Errorf("column %d = %s, want %s", i, h, expected[i])
 		}
+	}
+}
+
+func TestHistoryVisibleColumnsWithCluster(t *testing.T) {
+	cols := historyVisibleColumns(ColumnVisibility{Cluster: true})
+	if cols[0].header != "CLUSTER" {
+		t.Errorf("first column should be CLUSTER, got %s", cols[0].header)
+	}
+	if cols[1].header != "TEAM" {
+		t.Errorf("second column should be TEAM, got %s", cols[1].header)
+	}
+}
+
+func TestSortHistoryRowsByCluster(t *testing.T) {
+	rows := []bigquery.HistoryCostRow{
+		{ClusterName: "z-cluster", Team: "a", Workload: "svc1", TotalCost: 5.0},
+		{ClusterName: "a-cluster", Team: "a", Workload: "svc2", TotalCost: 10.0},
+		{ClusterName: "m-cluster", Team: "a", Workload: "svc3", TotalCost: 3.0},
+	}
+
+	SortHistoryRows(rows, HistorySortConfig{Column: HistSortByCluster, Asc: true})
+	if rows[0].ClusterName != "a-cluster" || rows[1].ClusterName != "m-cluster" || rows[2].ClusterName != "z-cluster" {
+		t.Errorf("cluster sort failed: %s %s %s", rows[0].ClusterName, rows[1].ClusterName, rows[2].ClusterName)
+	}
+}
+
+func TestHistoryColumnForKeyWithCluster(t *testing.T) {
+	// With cluster visible: CLUSTER(1), TEAM(2), WORKLOAD(3), ...
+	col, ok := HistoryColumnForKey('1', ColumnVisibility{Cluster: true})
+	if !ok || col != HistSortByCluster {
+		t.Errorf("key '1' with cluster should map to cluster, got %d ok=%v", col, ok)
+	}
+
+	col, ok = HistoryColumnForKey('2', ColumnVisibility{Cluster: true})
+	if !ok || col != HistSortByTeam {
+		t.Errorf("key '2' with cluster should map to team, got %d ok=%v", col, ok)
 	}
 }
 

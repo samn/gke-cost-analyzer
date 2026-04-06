@@ -88,6 +88,7 @@ All GCP API calls use [Application Default Credentials](https://cloud.google.com
 | Role | Used by | Purpose |
 |------|---------|---------|
 | `roles/billing.viewer` | `watch`, `record` | Read Autopilot pricing SKUs from the Cloud Billing Catalog API |
+| `roles/bigquery.dataViewer` | `history` | Read cost snapshots from BigQuery |
 | `roles/bigquery.dataEditor` | `record` | Stream-insert cost snapshots into BigQuery |
 | `roles/bigquery.dataOwner` | `setup` | Create BigQuery datasets and tables (only needed once) |
 | `roles/monitoring.metricReader` | `watch`, `record` | Query CPU/memory utilization via GCP Managed Prometheus |
@@ -141,6 +142,29 @@ Options:
 - `--dataset`: BigQuery dataset name (default: "gke_costs")
 - `--table`: BigQuery table name (default: "cost_snapshots")
 - `--interval`: Snapshot interval (default: 5m)
+
+### View historical costs
+
+Query BigQuery for recorded cost data:
+
+```bash
+gke-cost-analyzer history 3d --project my-gcp-project
+```
+
+View costs across all clusters:
+
+```bash
+gke-cost-analyzer history 1w --project my-gcp-project --all-clusters
+```
+
+Options:
+- `--project` (required): GCP project ID for BigQuery
+- `--dataset`: BigQuery dataset name (default: "gke_costs")
+- `--table`: BigQuery table name (default: "cost_snapshots")
+- `--cluster-name`: Filter by cluster name (defaults to auto-detected cluster)
+- `--all-clusters`: Show costs from all clusters (adds a CLUSTER column)
+- `--namespace`: Filter to a specific namespace
+- `--team`: Filter by team name
 
 ### Example BigQuery queries
 

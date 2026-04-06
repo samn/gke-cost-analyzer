@@ -10,7 +10,8 @@ import (
 type HistSortColumn int
 
 const (
-	HistSortByTeam HistSortColumn = iota
+	HistSortByCluster HistSortColumn = iota
+	HistSortByTeam
 	HistSortByWorkload
 	HistSortBySubtype
 	HistSortByMode
@@ -33,10 +34,14 @@ type historyColumnDef struct {
 
 // historyVisibleColumns returns the column definitions for the history table.
 func historyVisibleColumns(vis ColumnVisibility) []historyColumnDef {
-	cols := []historyColumnDef{
-		{header: "TEAM", sortCol: HistSortByTeam, sortable: true, helpName: "Team"},
-		{header: "WORKLOAD", sortCol: HistSortByWorkload, sortable: true, helpName: "Workload"},
+	var cols []historyColumnDef
+	if vis.Cluster {
+		cols = append(cols, historyColumnDef{header: "CLUSTER", sortCol: HistSortByCluster, sortable: true, helpName: "Cluster"})
 	}
+	cols = append(cols,
+		historyColumnDef{header: "TEAM", sortCol: HistSortByTeam, sortable: true, helpName: "Team"},
+		historyColumnDef{header: "WORKLOAD", sortCol: HistSortByWorkload, sortable: true, helpName: "Workload"},
+	)
 	if vis.Subtype {
 		cols = append(cols, historyColumnDef{header: "SUBTYPE", sortCol: HistSortBySubtype, sortable: true, helpName: "Subtype"})
 	}
@@ -90,7 +95,10 @@ func SortHistoryRows(rows []bigquery.HistoryCostRow, cfg HistorySortConfig) {
 			}
 			return cmp > 0
 		}
-		// Secondary sort: team → workload ascending
+		// Secondary sort: cluster → team → workload ascending
+		if rows[i].ClusterName != rows[j].ClusterName {
+			return rows[i].ClusterName < rows[j].ClusterName
+		}
 		if rows[i].Team != rows[j].Team {
 			return rows[i].Team < rows[j].Team
 		}
@@ -100,6 +108,8 @@ func SortHistoryRows(rows []bigquery.HistoryCostRow, cfg HistorySortConfig) {
 
 func histCompareByColumn(a, b bigquery.HistoryCostRow, col HistSortColumn) int {
 	switch col {
+	case HistSortByCluster:
+		return compareStr(a.ClusterName, b.ClusterName)
 	case HistSortByTeam:
 		return compareStr(a.Team, b.Team)
 	case HistSortByWorkload:
@@ -179,8 +189,7 @@ func SortHistoryTeamGroups(groups []HistoryTeamGroup, cfg HistorySortConfig) {
 }
 
 // HistoryColumnForKey maps a number key press to a history sort column.
-func HistoryColumnForKey(key rune, showSubtype, showUtilization, showMode bool) (HistSortColumn, bool) {
-	vis := ColumnVisibility{Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
+func HistoryColumnForKey(key rune, vis ColumnVisibility) (HistSortColumn, bool) {
 	defs := historyVisibleColumns(vis)
 
 	var cols []HistSortColumn

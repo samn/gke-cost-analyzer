@@ -155,6 +155,7 @@ func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filt
 	filterClause := buildFilterClause(filters)
 
 	sql := fmt.Sprintf(`SELECT
+  cluster_name,
   team, workload, subtype, namespace, cost_mode,
   LOGICAL_OR(is_spot) AS has_spot,
   AVG(pod_count) AS avg_pods,
@@ -171,7 +172,7 @@ func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filt
 FROM %s
 WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
   %s
-GROUP BY team, workload, subtype, namespace, cost_mode
+GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode
 ORDER BY total_cost DESC`,
 		r.tableRef(), seconds, filterClause)
 
@@ -189,14 +190,15 @@ func (r *Reader) QueryTimeSeries(ctx context.Context, since time.Time, bucketSec
 	filterClause := buildFilterClause(filters)
 
 	sql := fmt.Sprintf(`SELECT
+  cluster_name,
   team, workload, subtype, cost_mode,
   TIMESTAMP_SECONDS(DIV(UNIX_SECONDS(timestamp), %d) * %d) AS bucket,
   SUM(total_cost) AS bucket_cost
 FROM %s
 WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
   %s
-GROUP BY team, workload, subtype, cost_mode, bucket
-ORDER BY team, workload, subtype, cost_mode, bucket`,
+GROUP BY cluster_name, team, workload, subtype, cost_mode, bucket
+ORDER BY cluster_name, team, workload, subtype, cost_mode, bucket`,
 		bucketSeconds, bucketSeconds, r.tableRef(), seconds, filterClause)
 
 	resp, err := r.query(ctx, sql)
@@ -211,30 +213,31 @@ ORDER BY team, workload, subtype, cost_mode, bucket`,
 func parseAggregatedRows(resp *queryResponse) ([]HistoryCostRow, error) {
 	var rows []HistoryCostRow
 	for i, row := range resp.Rows {
-		if len(row.F) < 17 {
-			return nil, fmt.Errorf("row %d: expected at least 17 columns, got %d", i, len(row.F))
+		if len(row.F) < 18 {
+			return nil, fmt.Errorf("row %d: expected at least 18 columns, got %d", i, len(row.F))
 		}
 
 		r := HistoryCostRow{
-			Team:      cellString(row.F[0]),
-			Workload:  cellString(row.F[1]),
-			Subtype:   cellString(row.F[2]),
-			Namespace: cellString(row.F[3]),
-			CostMode:  cellString(row.F[4]),
+			ClusterName: cellString(row.F[0]),
+			Team:        cellString(row.F[1]),
+			Workload:    cellString(row.F[2]),
+			Subtype:     cellString(row.F[3]),
+			Namespace:   cellString(row.F[4]),
+			CostMode:    cellString(row.F[5]),
 		}
 
-		r.HasSpot = cellString(row.F[5]) == "true"
-		r.AvgPods = cellFloat(row.F[6])
-		r.AvgCPUVCPU = cellFloat(row.F[7])
-		r.AvgMemoryGB = cellFloat(row.F[8])
-		r.TotalCost = cellFloat(row.F[9])
-		r.TotalCPUCost = cellFloat(row.F[10])
-		r.TotalMemCost = cellFloat(row.F[11])
-		r.AvgCostPerHour = cellFloat(row.F[12])
-		r.TotalWastedCost = cellFloat(row.F[13])
-		r.AvgCPUUtil = cellFloatPtr(row.F[14])
-		r.AvgMemUtil = cellFloatPtr(row.F[15])
-		r.AvgEfficiency = cellFloatPtr(row.F[16])
+		r.HasSpot = cellString(row.F[6]) == "true"
+		r.AvgPods = cellFloat(row.F[7])
+		r.AvgCPUVCPU = cellFloat(row.F[8])
+		r.AvgMemoryGB = cellFloat(row.F[9])
+		r.TotalCost = cellFloat(row.F[10])
+		r.TotalCPUCost = cellFloat(row.F[11])
+		r.TotalMemCost = cellFloat(row.F[12])
+		r.AvgCostPerHour = cellFloat(row.F[13])
+		r.TotalWastedCost = cellFloat(row.F[14])
+		r.AvgCPUUtil = cellFloatPtr(row.F[15])
+		r.AvgMemUtil = cellFloatPtr(row.F[16])
+		r.AvgEfficiency = cellFloatPtr(row.F[17])
 
 		rows = append(rows, r)
 	}
@@ -245,26 +248,27 @@ func parseAggregatedRows(resp *queryResponse) ([]HistoryCostRow, error) {
 func parseTimeSeriesRows(resp *queryResponse) ([]TimeSeriesPoint, error) {
 	var points []TimeSeriesPoint
 	for i, row := range resp.Rows {
-		if len(row.F) < 6 {
-			return nil, fmt.Errorf("row %d: expected 6 columns, got %d", i, len(row.F))
+		if len(row.F) < 7 {
+			return nil, fmt.Errorf("row %d: expected 7 columns, got %d", i, len(row.F))
 		}
 
 		p := TimeSeriesPoint{
 			Key: WorkloadKey{
-				Team:     cellString(row.F[0]),
-				Workload: cellString(row.F[1]),
-				Subtype:  cellString(row.F[2]),
-				CostMode: cellString(row.F[3]),
+				ClusterName: cellString(row.F[0]),
+				Team:        cellString(row.F[1]),
+				Workload:    cellString(row.F[2]),
+				Subtype:     cellString(row.F[3]),
+				CostMode:    cellString(row.F[4]),
 			},
 		}
 
 		// BigQuery returns TIMESTAMP as epoch seconds (as a string float).
-		bucketStr := cellString(row.F[4])
+		bucketStr := cellString(row.F[5])
 		if bucketSec, err := strconv.ParseFloat(bucketStr, 64); err == nil {
 			p.Bucket = time.Unix(int64(bucketSec), 0).UTC()
 		}
 
-		p.BucketCost = cellFloat(row.F[5])
+		p.BucketCost = cellFloat(row.F[6])
 		points = append(points, p)
 	}
 	return points, nil

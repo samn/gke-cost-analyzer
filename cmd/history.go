@@ -15,15 +15,19 @@ import (
 )
 
 var (
-	historyDataset string
-	historyTable   string
-	historyTeam    string
+	historyDataset     string
+	historyTable       string
+	historyTeam        string
+	historyCluster     string
+	historyAllClusters bool
 )
 
 func init() {
 	historyCmd.Flags().StringVar(&historyDataset, "dataset", "gke_costs", "BigQuery dataset name")
 	historyCmd.Flags().StringVar(&historyTable, "table", "cost_snapshots", "BigQuery table name")
 	historyCmd.Flags().StringVar(&historyTeam, "team", "", "Filter by team name")
+	historyCmd.Flags().StringVar(&historyCluster, "cluster-name", "", "Filter by cluster name (defaults to auto-detected cluster)")
+	historyCmd.Flags().BoolVar(&historyAllClusters, "all-clusters", false, "Show costs from all clusters")
 	rootCmd.AddCommand(historyCmd)
 }
 
@@ -38,6 +42,10 @@ var historyCmd = &cobra.Command{
 func runHistory(cmd *cobra.Command, args []string) error {
 	if project == "" {
 		return fmt.Errorf("--project is required for the history command")
+	}
+
+	if historyAllClusters && historyCluster != "" {
+		return fmt.Errorf("cannot use --all-clusters with --cluster-name")
 	}
 
 	duration, err := parseHistoryDuration(args[0])
@@ -60,22 +68,38 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	bucketSecs := bigquery.BucketSeconds(duration)
 
 	filters := bigquery.QueryFilters{
-		ClusterName: clusterName,
+		ClusterName: resolveClusterFilter(clusterName, historyCluster, historyAllClusters),
 		Namespace:   namespace,
 		Team:        historyTeam,
 	}
 
 	lc := labelConfig()
-	showSubtype := lc.SubtypeLabel != ""
-	showMode := mode == "all"
+	vis := tui.ColumnVisibility{
+		Cluster: historyAllClusters,
+		Subtype: lc.SubtypeLabel != "",
+		Mode:    mode == "all",
+	}
 
-	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, showSubtype, showMode)
+	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, vis)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
 	}
 
 	return nil
+}
+
+// resolveClusterFilter determines the effective cluster filter for the history
+// command. --all-clusters clears the filter; --cluster-name overrides
+// auto-detection; otherwise the auto-detected cluster is used.
+func resolveClusterFilter(autoDetected, explicit string, allClusters bool) string {
+	if allClusters {
+		return ""
+	}
+	if explicit != "" {
+		return explicit
+	}
+	return autoDetected
 }
 
 // parseHistoryDuration parses a duration string like "3d", "1w", "12h".
