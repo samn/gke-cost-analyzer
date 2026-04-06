@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
 	"github.com/samn/gke-cost-analyzer/internal/kube"
@@ -42,7 +42,7 @@ func TestModelInitialView(t *testing.T) {
 	lister := &mockPodLister{}
 	m := testModel(lister)
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Loading") {
 		t.Errorf("initial view should show loading, got: %s", view)
 	}
@@ -69,7 +69,7 @@ func TestModelCostDataUpdate(t *testing.T) {
 	}
 
 	updated, _ := m.Update(msg)
-	view := updated.View()
+	view := updated.View().Content
 
 	if strings.Contains(view, "Loading") {
 		t.Error("view should not show loading after data received")
@@ -92,7 +92,7 @@ func TestModelViewShowsElapsedTime(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "watching for 5m") {
 		t.Errorf("expected 'watching for 5m' in view, got:\n%s", view)
 	}
@@ -107,7 +107,7 @@ func TestModelErrorUpdate(t *testing.T) {
 
 	msg := errMsg{err: context.DeadlineExceeded}
 	updated, _ := m.Update(msg)
-	view := updated.View()
+	view := updated.View().Content
 
 	if !strings.Contains(view, "error") {
 		t.Errorf("view should show error, got: %s", view)
@@ -118,7 +118,7 @@ func TestModelQuitOnQ(t *testing.T) {
 	lister := &mockPodLister{}
 	m := testModel(lister)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
 	if cmd == nil {
 		t.Fatal("expected quit command")
 	}
@@ -134,7 +134,7 @@ func TestModelQuitOnCtrlC(t *testing.T) {
 	lister := &mockPodLister{}
 	m := testModel(lister)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("expected quit command")
 	}
@@ -202,7 +202,7 @@ func TestModelViewSortsResults(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 
 	// Default sort is team ascending, so alpha should appear before zeta
 	alphaIdx := strings.Index(view, "alpha")
@@ -235,7 +235,7 @@ func TestModelKeyPressSortToggle(t *testing.T) {
 	}
 
 	// Press "3" -> PODS (no subtype in testModel)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
 	m2 := updated.(Model)
 	if m2.sortCfg.Column != SortByPods {
 		t.Errorf("expected SortByPods, got %v", m2.sortCfg.Column)
@@ -245,7 +245,7 @@ func TestModelKeyPressSortToggle(t *testing.T) {
 	}
 
 	// Press "3" again -> toggle to descending
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
 	m3 := updated.(Model)
 	if m3.sortCfg.Column != SortByPods {
 		t.Errorf("expected SortByPods, got %v", m3.sortCfg.Column)
@@ -255,7 +255,7 @@ func TestModelKeyPressSortToggle(t *testing.T) {
 	}
 
 	// Press "3" once more -> toggle back to ascending
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	updated, _ = m3.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
 	m4 := updated.(Model)
 	if m4.sortCfg.Asc != true {
 		t.Error("expected ascending after second toggle")
@@ -267,7 +267,7 @@ func TestModelKeyPressInvalidKey(t *testing.T) {
 	m := testModel(lister)
 
 	// Press "8" which is invalid without subtype (only 1-7 valid)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '8', Text: "8"})
 	m2 := updated.(Model)
 	// Sort config should remain unchanged
 	if m2.sortCfg.Column != SortByTeam || !m2.sortCfg.Asc {
@@ -284,7 +284,7 @@ func TestModelHelpText(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "Sort:") {
 		t.Errorf("expected help text with Sort: prefix in view:\n%s", view)
@@ -324,7 +324,7 @@ func TestModelHelpTextWithSubtype(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 
 	if !strings.Contains(view, "3=Subtype") {
 		t.Errorf("expected 3=Subtype in help text with subtype:\n%s", view)
@@ -339,14 +339,14 @@ func TestModelSortKeyWithSubtype(t *testing.T) {
 	m := testModelWithSubtype(lister)
 
 	// Press "3" -> SUBTYPE (with subtype)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
 	m2 := updated.(Model)
 	if m2.sortCfg.Column != SortBySubtype {
 		t.Errorf("expected SortBySubtype with subtype, got %v", m2.sortCfg.Column)
 	}
 
 	// Press "8" -> COST (valid with subtype)
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'8'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: '8', Text: "8"})
 	m3 := updated.(Model)
 	if m3.sortCfg.Column != SortByCost {
 		t.Errorf("expected SortByCost, got %v", m3.sortCfg.Column)
@@ -365,7 +365,7 @@ func TestModelViewReflectsSortOrder(t *testing.T) {
 	// Sort by pods descending
 	m.sortCfg = SortConfig{Column: SortByPods, Asc: false}
 	m.rebuildDisplay()
-	view := m.View()
+	view := m.View().Content
 
 	// zeta (5 pods) should appear before alpha (1 pod)
 	zetaIdx := strings.Index(view, "zeta")
@@ -388,7 +388,7 @@ func TestModelSortIndicatorInView(t *testing.T) {
 	m.rebuildDisplay()
 
 	// Default sort is team ascending
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "TEAM ^") {
 		t.Errorf("expected 'TEAM ^' sort indicator in view:\n%s", view)
 	}
@@ -430,7 +430,7 @@ func TestModelViewShowsPrometheusError(t *testing.T) {
 	m.rebuildDisplay()
 	m.promErr = fmt.Errorf("connection refused")
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "prometheus test-project error: connection refused") {
 		t.Errorf("expected prometheus error with project in view, got:\n%s", view)
 	}
@@ -447,7 +447,7 @@ func TestModelViewShowsNoUtilizationData(t *testing.T) {
 	m.promErr = nil
 	m.utilPodCount = 0
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "prometheus test-project: no utilization data") {
 		t.Errorf("expected 'no utilization data' with project in view, got:\n%s", view)
 	}
@@ -464,7 +464,7 @@ func TestModelViewShowsUtilizationCount(t *testing.T) {
 	m.promErr = nil
 	m.utilPodCount = 5
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "utilization test-project: 5 pods") {
 		t.Errorf("expected 'utilization: 5 pods' with project in view, got:\n%s", view)
 	}
@@ -481,7 +481,7 @@ func TestModelViewShowsNoProjectWhenEmpty(t *testing.T) {
 	m.promErr = nil
 	m.utilPodCount = 0
 
-	view := m.View()
+	view := m.View().Content
 	// Without a project, should show "prometheus:" without a project name
 	if !strings.Contains(view, "(prometheus: no utilization data)") {
 		t.Errorf("expected '(prometheus: no utilization data)' without project tag, got:\n%s", view)
@@ -497,7 +497,7 @@ func TestModelViewHelpTextWithUtilization(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "8=CPU%") {
 		t.Errorf("expected 8=CPU%% in help text with utilization:\n%s", view)
 	}
@@ -688,42 +688,42 @@ func TestModelCursorNavigation(t *testing.T) {
 	}
 
 	// Move down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m2 := updated.(Model)
 	if m2.cursor != 1 {
 		t.Errorf("expected cursor at 1 after down, got %d", m2.cursor)
 	}
 
 	// Move down again
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m3 := updated.(Model)
 	if m3.cursor != 2 {
 		t.Errorf("expected cursor at 2 after second down, got %d", m3.cursor)
 	}
 
 	// Move down at bottom — should not go past last row
-	updated, _ = m3.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = m3.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m4 := updated.(Model)
 	if m4.cursor != 2 {
 		t.Errorf("expected cursor clamped at 2, got %d", m4.cursor)
 	}
 
 	// Move up
-	updated, _ = m4.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = m4.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m5 := updated.(Model)
 	if m5.cursor != 1 {
 		t.Errorf("expected cursor at 1 after up, got %d", m5.cursor)
 	}
 
 	// Move up to top
-	updated, _ = m5.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = m5.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m6 := updated.(Model)
 	if m6.cursor != 0 {
 		t.Errorf("expected cursor at 0, got %d", m6.cursor)
 	}
 
 	// Move up at top — should not go below 0
-	updated, _ = m6.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = m6.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m7 := updated.(Model)
 	if m7.cursor != 0 {
 		t.Errorf("expected cursor clamped at 0, got %d", m7.cursor)
@@ -741,14 +741,14 @@ func TestModelCursorNavigationJK(t *testing.T) {
 	m.rebuildDisplay()
 
 	// j moves down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	m2 := updated.(Model)
 	if m2.cursor != 1 {
 		t.Errorf("expected cursor at 1 after j, got %d", m2.cursor)
 	}
 
 	// k moves up
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	m3 := updated.(Model)
 	if m3.cursor != 0 {
 		t.Errorf("expected cursor at 0 after k, got %d", m3.cursor)
@@ -772,7 +772,7 @@ func TestModelExpandCollapse(t *testing.T) {
 	}
 
 	// Press Enter on alpha (cursor=0) to expand
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m2 := updated.(Model)
 
 	// Should now have 4 rows: alpha header + 2 workloads + beta header
@@ -784,7 +784,7 @@ func TestModelExpandCollapse(t *testing.T) {
 	}
 
 	// View should show workload names
-	view := m2.View()
+	view := m2.View().Content
 	if !strings.Contains(view, "web") {
 		t.Errorf("expected 'web' workload in expanded view:\n%s", view)
 	}
@@ -797,7 +797,7 @@ func TestModelExpandCollapse(t *testing.T) {
 	}
 
 	// Press Enter again on alpha to collapse
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m3 := updated.(Model)
 	if len(m3.displayRows) != 2 {
 		t.Fatalf("expected 2 display rows after collapse, got %d", len(m3.displayRows))
@@ -828,7 +828,7 @@ func TestModelExpandFromWorkloadRow(t *testing.T) {
 	}
 
 	// Press Enter on workload row should collapse the parent team
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m2 := updated.(Model)
 	if m2.expandedTeams["alpha"] {
 		t.Error("pressing Enter on workload row should collapse parent team")
@@ -847,7 +847,7 @@ func TestModelToggleExpandAll(t *testing.T) {
 	m.rebuildDisplay()
 
 	// Press 'a' to expand all
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m2 := updated.(Model)
 
 	if !m2.expandedTeams["alpha"] || !m2.expandedTeams["beta"] {
@@ -859,7 +859,7 @@ func TestModelToggleExpandAll(t *testing.T) {
 	}
 
 	// Press 'a' again to collapse all
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m3 := updated.(Model)
 
 	if m3.expandedTeams["alpha"] || m3.expandedTeams["beta"] {
@@ -891,7 +891,7 @@ func TestModelToggleGroupMode(t *testing.T) {
 	}
 
 	// Press 'g' to switch to flat mode
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
 	m2 := updated.(Model)
 
 	if m2.grouped {
@@ -909,7 +909,7 @@ func TestModelToggleGroupMode(t *testing.T) {
 	}
 
 	// View should show both team and workload columns
-	view := m2.View()
+	view := m2.View().Content
 	if !strings.Contains(view, "alpha") {
 		t.Errorf("expected team 'alpha' in flat view:\n%s", view)
 	}
@@ -921,7 +921,7 @@ func TestModelToggleGroupMode(t *testing.T) {
 	}
 
 	// Press 'g' again to switch back to grouped mode
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
 	m3 := updated.(Model)
 
 	if !m3.grouped {
@@ -972,7 +972,7 @@ func TestModelFlatModeHelpText(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "g=Grouped") {
 		t.Errorf("expected 'g=Grouped' in flat mode help text:\n%s", view)
 	}
@@ -990,7 +990,7 @@ func TestModelGroupedModeHelpText(t *testing.T) {
 	}
 	m.rebuildDisplay()
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "g=Flat") {
 		t.Errorf("expected 'g=Flat' in grouped mode help text:\n%s", view)
 	}
@@ -1011,14 +1011,14 @@ func TestModelFlatModeExpandNoOp(t *testing.T) {
 	m.rebuildDisplay()
 
 	// Enter in flat mode should be a no-op
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m2 := updated.(Model)
 	if len(m2.displayRows) != 2 {
 		t.Errorf("expected display rows unchanged after enter in flat mode, got %d", len(m2.displayRows))
 	}
 
 	// 'a' in flat mode should also be a no-op
-	updated, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated, _ = m2.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	m3 := updated.(Model)
 	if len(m3.displayRows) != 2 {
 		t.Errorf("expected display rows unchanged after 'a' in flat mode, got %d", len(m3.displayRows))
@@ -1036,7 +1036,7 @@ func TestModelExpandSpaceKey(t *testing.T) {
 	m.rebuildDisplay()
 
 	// Space should also expand
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: ' ', Text: " "})
 	m2 := updated.(Model)
 	if !m2.expandedTeams["alpha"] {
 		t.Error("space key should expand team")

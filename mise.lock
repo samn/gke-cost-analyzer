@@ -37,33 +37,34 @@ version = "2.10.1"
 backend = "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
 
 [[tools.prek]]
-version = "0.3.6"
+version = "0.3.8"
 backend = "aqua:j178/prek"
 
 [tools.prek."platforms.linux-arm64"]
-checksum = "sha256:0cf6d013c981a56465757dc7ff0fd3a9ceace27d7f0a792f435d1be79b790236"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:b88d96aef4ea84999d12958c390611d3a26194ee57225fe2ff15a9855e3a71bf"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-aarch64-unknown-linux-musl.tar.gz"
 
 [tools.prek."platforms.linux-arm64-musl"]
-checksum = "sha256:0cf6d013c981a56465757dc7ff0fd3a9ceace27d7f0a792f435d1be79b790236"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-aarch64-unknown-linux-musl.tar.gz"
+checksum = "sha256:b88d96aef4ea84999d12958c390611d3a26194ee57225fe2ff15a9855e3a71bf"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-aarch64-unknown-linux-musl.tar.gz"
 
 [tools.prek."platforms.linux-x64"]
-checksum = "sha256:942564ccc9c342d317294fec7b7a77aa24ec71136e3439b15cddb62e49f76899"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:732cfb03960e6dfd5df2cb67906797aa8831750ef3a6f6340ec2b90ee8b7a59f"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-x86_64-unknown-linux-musl.tar.gz"
+provenance = "github-attestations"
 
 [tools.prek."platforms.linux-x64-musl"]
-checksum = "sha256:942564ccc9c342d317294fec7b7a77aa24ec71136e3439b15cddb62e49f76899"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-x86_64-unknown-linux-musl.tar.gz"
+checksum = "sha256:732cfb03960e6dfd5df2cb67906797aa8831750ef3a6f6340ec2b90ee8b7a59f"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-x86_64-unknown-linux-musl.tar.gz"
 
 [tools.prek."platforms.macos-arm64"]
-checksum = "sha256:50535d4fb3a0fd05f137bbdae6f8ffde17615949bd282817e3aa5755dd8d8d4c"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-aarch64-apple-darwin.tar.gz"
+checksum = "sha256:702fde4399fafb054ce85d0a64367689e3668b6475d732c4a46aae50cec0a4be"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-aarch64-apple-darwin.tar.gz"
 
 [tools.prek."platforms.macos-x64"]
-checksum = "sha256:0ef3ec3dd4429a5d9e2ebe1b65b37319b5611be3d688a86813aa3004761c4db3"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-x86_64-apple-darwin.tar.gz"
+checksum = "sha256:010198daf4e99a76d03a911973320542ffd7a04091cf7e86c60ac861187577f6"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-x86_64-apple-darwin.tar.gz"
 
 [tools.prek."platforms.windows-x64"]
-checksum = "sha256:71d02992997e3fc7a3cf1877febf385bc299cdbe397d1b7b2e57f8bc3d0a14e8"
-url = "https://github.com/j178/prek/releases/download/v0.3.6/prek-x86_64-pc-windows-msvc.zip"
+checksum = "sha256:1da2735c31548dacd2751f90c15b5f643aa72f3053f366636f95153ee2c7186e"
+url = "https://github.com/j178/prek/releases/download/v0.3.8/prek-x86_64-pc-windows-msvc.zip"

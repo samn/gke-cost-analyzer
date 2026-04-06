@@ -1,5 +1,43 @@
 - Use `mise` to manage the toolchain for this project to ensure a consistent development environment. Pin versions.
 - Install precommit checks when setting up a new environment (after installing tools with `mise`) by running `prek install`
+
+## Environment Setup
+
+Set up the development environment with `mise`. If `mise` is not installed:
+
+```sh
+curl -sSf https://mise.run | sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then trust and install the project toolchain:
+
+```sh
+mise trust
+mise install
+```
+
+This installs Go (version pinned in `mise.toml`), `prek` (pre-commit runner),
+and `golangci-lint`. If some tools fail to install due to network issues, retry
+or install them individually.
+
+After mise tools are installed, the Go binary is at:
+
+```sh
+# Use mise exec to run Go commands in the correct environment:
+mise exec -- go version
+mise exec -- go build ./...
+mise exec -- go test ./...
+
+# Or add the Go install to your PATH directly:
+export PATH="$(mise where go)/bin:$PATH"
+```
+
+Install pre-commit hooks:
+
+```sh
+prek install
+```
 - Make sure that everything compile without warnings.
 - Write tests for all functionality that you create. The tests should be robust and reliable.
 - Minimize complexity wherever possible

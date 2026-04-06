@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
 	"github.com/samn/gke-cost-analyzer/internal/kube"
@@ -119,7 +119,7 @@ func (m Model) Init() tea.Cmd {
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			m.cancel()
@@ -145,7 +145,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 			return m, nil
-		case "enter", " ":
+		case "enter", "space":
 			if m.grouped {
 				m.toggleExpand()
 			}
@@ -261,9 +261,11 @@ func (m *Model) clampCursor() {
 }
 
 // View renders the TUI.
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.lastUpdate.IsZero() && m.err == nil {
-		return "Loading...\n"
+		v := tea.NewView("Loading...\n")
+		v.AltScreen = true
+		return v
 	}
 
 	elapsed := time.Since(m.startedAt).Truncate(time.Second)
@@ -303,7 +305,9 @@ func (m Model) View() string {
 		result += "\n" + RenderEventLog(m.tracker.Events(), time.Now(), eventLogMaxLines)
 	}
 
-	return result
+	v := tea.NewView(result)
+	v.AltScreen = true
+	return v
 }
 
 // fetchCosts fetches pod data and calculates costs.

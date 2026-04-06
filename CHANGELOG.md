@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Upgraded Bubble Tea from v1 (`github.com/charmbracelet/bubbletea`) to v2 (`charm.land/bubbletea/v2`) with declarative view model
+- Upgraded Lip Gloss from v1 (`github.com/charmbracelet/lipgloss`) to v2 (`charm.land/lipgloss/v2`)
+- Updated all dependencies to latest versions: sentry-go v0.44.1, parquet-go v0.29.0, cobra latest, oauth2 v0.36.0, k8s.io packages v0.35.3
 - Dockerfile now copies a pre-built binary instead of downloading from GitHub Releases at build time
 - Release workflow builds and pushes a Docker image to `ghcr.io/samn/gke-cost-analyzer` on each tagged release (tagged with version and `latest`), reusing the same binary from the release artifacts
 
