@@ -89,15 +89,17 @@ auto-detected cluster (from kubeconfig or GCE metadata), consistent with other
 commands. Use `--cluster-name` to filter to a specific cluster, or
 `--all-clusters` to query data from all clusters. Using `--all-clusters` adds
 a sortable CLUSTER column to the TUI. The two flags are mutually exclusive.
+If auto-detection fails and no `--cluster-name` is provided, all clusters are
+queried (equivalent to `--all-clusters` but without the CLUSTER column).
 
 The command executes two BigQuery queries (both always include `cluster_name`
 in SELECT and GROUP BY to distinguish rows from different clusters):
 1. **Aggregated costs**: groups by cluster_name/team/workload/subtype/cost_mode,
    computing total spend, average $/hr, average pod count, CPU/memory requests,
    and utilization metrics (when available).
-2. **Time-bucketed costs**: groups by cluster_name/workload and time bucket for
-   sparkline rendering. Bucket size adapts to the time range (5min for ≤6h,
-   30min for ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
+2. **Time-bucketed costs**: groups by cluster_name/team/workload/subtype/cost_mode
+   and time bucket for sparkline rendering. Bucket size adapts to the time range
+   (5min for ≤6h, 30min for ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
 
 The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [SUBTYPE], [MODE],
 AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and

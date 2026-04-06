@@ -67,18 +67,8 @@ func runHistory(cmd *cobra.Command, args []string) error {
 
 	bucketSecs := bigquery.BucketSeconds(duration)
 
-	// Resolve cluster filter: --all-clusters clears filter, --cluster-name
-	// overrides auto-detection, otherwise use auto-detected cluster.
-	filterCluster := clusterName // auto-detected default
-	if historyCluster != "" {
-		filterCluster = historyCluster
-	}
-	if historyAllClusters {
-		filterCluster = ""
-	}
-
 	filters := bigquery.QueryFilters{
-		ClusterName: filterCluster,
+		ClusterName: resolveClusterFilter(clusterName, historyCluster, historyAllClusters),
 		Namespace:   namespace,
 		Team:        historyTeam,
 	}
@@ -95,6 +85,19 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// resolveClusterFilter determines the effective cluster filter for the history
+// command. --all-clusters clears the filter; --cluster-name overrides
+// auto-detection; otherwise the auto-detected cluster is used.
+func resolveClusterFilter(autoDetected, explicit string, allClusters bool) string {
+	if allClusters {
+		return ""
+	}
+	if explicit != "" {
+		return explicit
+	}
+	return autoDetected
 }
 
 // parseHistoryDuration parses a duration string like "3d", "1w", "12h".

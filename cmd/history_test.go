@@ -90,55 +90,27 @@ func TestHistoryAllClustersWithClusterNameError(t *testing.T) {
 	}
 }
 
-func TestHistoryClusterFilterLogic(t *testing.T) {
-	// When historyCluster is set, it should override auto-detected clusterName
-	oldCluster := clusterName
-	oldHistCluster := historyCluster
-	oldAllClusters := historyAllClusters
-	defer func() {
-		clusterName = oldCluster
-		historyCluster = oldHistCluster
-		historyAllClusters = oldAllClusters
-	}()
-
-	// Simulate auto-detected cluster
-	clusterName = "auto-detected"
-	historyCluster = ""
-	historyAllClusters = false
-
-	// Default: uses auto-detected
-	filterCluster := clusterName
-	if historyCluster != "" {
-		filterCluster = historyCluster
+func TestResolveClusterFilter(t *testing.T) {
+	tests := []struct {
+		name         string
+		autoDetected string
+		explicit     string
+		allClusters  bool
+		want         string
+	}{
+		{"default uses auto-detected", "auto-detected", "", false, "auto-detected"},
+		{"explicit overrides auto-detected", "auto-detected", "explicit", false, "explicit"},
+		{"all-clusters clears filter", "auto-detected", "", true, ""},
+		{"all-clusters overrides explicit", "auto-detected", "explicit", true, ""},
+		{"no auto-detection and no flags queries all", "", "", false, ""},
 	}
-	if historyAllClusters {
-		filterCluster = ""
-	}
-	if filterCluster != "auto-detected" {
-		t.Errorf("default should use auto-detected cluster, got %q", filterCluster)
-	}
-
-	// Explicit --cluster-name overrides
-	historyCluster = "explicit"
-	filterCluster = clusterName
-	if historyCluster != "" {
-		filterCluster = historyCluster
-	}
-	if filterCluster != "explicit" {
-		t.Errorf("explicit should override, got %q", filterCluster)
-	}
-
-	// --all-clusters clears filter
-	historyAllClusters = true
-	historyCluster = ""
-	filterCluster = clusterName
-	if historyCluster != "" {
-		filterCluster = historyCluster
-	}
-	if historyAllClusters {
-		filterCluster = ""
-	}
-	if filterCluster != "" {
-		t.Errorf("--all-clusters should clear filter, got %q", filterCluster)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveClusterFilter(tt.autoDetected, tt.explicit, tt.allClusters)
+			if got != tt.want {
+				t.Errorf("resolveClusterFilter(%q, %q, %v) = %q, want %q",
+					tt.autoDetected, tt.explicit, tt.allClusters, got, tt.want)
+			}
+		})
 	}
 }
