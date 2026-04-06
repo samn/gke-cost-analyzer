@@ -49,6 +49,25 @@ docker run --rm gke-cost-analyzer record \
   --cluster-name my-cluster
 ```
 
+To use commands that require GCP credentials (like `history`), mount your
+[Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials)
+into the container:
+
+```bash
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  -v "$HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro" \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
+  gke-cost-analyzer history 7d \
+  --project my-gcp-project
+```
+
+If you haven't already, generate ADC with:
+
+```bash
+gcloud auth application-default login
+```
+
 ## Permissions
 
 ### Kubernetes RBAC
