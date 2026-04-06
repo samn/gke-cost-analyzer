@@ -37,6 +37,7 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           install: true
+          reshim: true
 
       - name: Build and compress linux-amd64 binary
         run: make compress GOOS=linux GOARCH=amd64 VERSION=${{ github.ref_name }}

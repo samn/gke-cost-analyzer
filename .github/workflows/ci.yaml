@@ -29,6 +29,7 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           install: true
+          reshim: true
 
       - name: Run prek checks
         run: prek run --all-files
@@ -51,6 +52,7 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           install: false
+          cache_save: false
 
       - name: Install Go
         run: mise install go
