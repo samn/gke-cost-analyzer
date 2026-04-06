@@ -17,11 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-
-      - name: Go module cache
+      - name: Restore Go module cache
         uses: actions/cache@v4
         with:
           path: |
@@ -29,6 +25,11 @@ jobs:
             ~/.cache/go-build
           key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: go-${{ runner.os }}-
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          reshim: true
 
       - name: Run prek checks
         run: prek run --all-files
@@ -39,18 +40,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: jdx/mise-action@v2
-        with:
-          install: true
-
-      - name: Go module cache
-        uses: actions/cache@v4
+      - name: Restore Go module cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/go/pkg/mod
             ~/.cache/go-build
           key: go-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: go-${{ runner.os }}-
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: false
+          cache_save: false
+
+      - name: Install Go
+        run: mise install go
 
       - name: Run tests
         run: go test -race -v ./...
