@@ -74,11 +74,13 @@ func runHistory(cmd *cobra.Command, args []string) error {
 	}
 
 	lc := labelConfig()
-	showCluster := historyAllClusters
-	showSubtype := lc.SubtypeLabel != ""
-	showMode := mode == "all"
+	vis := tui.ColumnVisibility{
+		Cluster: historyAllClusters,
+		Subtype: lc.SubtypeLabel != "",
+		Mode:    mode == "all",
+	}
 
-	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, showCluster, showSubtype, showMode)
+	model := tui.NewHistoryModel(ctx, cancel, reader, duration, bucketSecs, filters, vis)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

@@ -28,7 +28,7 @@ func (m *mockFetcher) QueryTimeSeries(_ context.Context, _ time.Time, _ int64, _
 
 func testHistoryModel(fetcher HistoryDataFetcher) HistoryModel {
 	ctx, cancel := context.WithCancel(context.Background())
-	return NewHistoryModel(ctx, cancel, fetcher, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, false, false, false)
+	return NewHistoryModel(ctx, cancel, fetcher, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, ColumnVisibility{})
 }
 
 func TestHistoryModelInitialView(t *testing.T) {
@@ -288,7 +288,7 @@ func TestHistoryModelUtilizationDetection(t *testing.T) {
 	updated, _ := m.Update(msg)
 	hm := updated.(HistoryModel)
 
-	if !hm.hasUtilization {
+	if !hm.vis.Utilization {
 		t.Error("should detect utilization data")
 	}
 }
@@ -347,9 +347,9 @@ func TestHistoryModelToggleExpandAll(t *testing.T) {
 
 func TestHistoryModelAllClusters(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, true, false, false)
+	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, bigquery.QueryFilters{}, ColumnVisibility{Cluster: true})
 
-	if !m.showCluster {
+	if !m.vis.Cluster {
 		t.Error("showCluster should be true")
 	}
 
@@ -382,7 +382,7 @@ func TestHistoryModelAllClusters(t *testing.T) {
 func TestHistoryModelSingleClusterHeader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	filters := bigquery.QueryFilters{ClusterName: "my-cluster"}
-	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, filters, false, false, false)
+	m := NewHistoryModel(ctx, cancel, &mockFetcher{}, 3*24*time.Hour, 3600, filters, ColumnVisibility{})
 
 	msg := historyDataMsg{
 		rows: []bigquery.HistoryCostRow{

@@ -56,8 +56,7 @@ func buildFlatHistoryDisplayRows(rows []bigquery.HistoryCostRow) []HistoryDispla
 }
 
 // RenderHistoryTable renders the history cost data as a formatted table string.
-func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtype, showUtilization, showMode bool, sortCfg HistorySortConfig, cursor int, sparklines map[bigquery.WorkloadKey]string) string {
-	vis := ColumnVisibility{Cluster: showCluster, Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
+func RenderHistoryTable(displayRows []HistoryDisplayRow, vis ColumnVisibility, sortCfg HistorySortConfig, cursor int, sparklines map[bigquery.WorkloadKey]string) string {
 	defs := historyVisibleColumns(vis)
 
 	rows := make([][]string, 0, len(displayRows)+2)
@@ -74,17 +73,17 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 				arrow = "▼"
 			}
 			r := dr.Row
-			if showCluster {
+			if vis.Cluster {
 				row = append(row, "")
 			}
 			row = append(row,
 				dr.TeamName,
 				fmt.Sprintf("%d workloads %s", dr.WorkloadCount, arrow),
 			)
-			if showSubtype {
+			if vis.Subtype {
 				row = append(row, "")
 			}
-			if showMode {
+			if vis.Mode {
 				row = append(row, "")
 			}
 			row = append(row,
@@ -96,7 +95,7 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 				"", // trend: empty at team level
 				"", // spot: mixed at team level
 			)
-			if showUtilization {
+			if vis.Utilization {
 				row = append(row, "", "", fmt.Sprintf("$%.4f", r.TotalWastedCost))
 			}
 			totalAvgPods += r.AvgPods
@@ -107,11 +106,11 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 			totalWaste += r.TotalWastedCost
 
 		case rowWorkloadDetail:
-			row = buildHistoryWorkloadRow(dr.Row, "", showCluster, showSubtype, showMode, showUtilization, sparklines)
+			row = buildHistoryWorkloadRow(dr.Row, "", vis, sparklines)
 
 		case rowFlat:
 			r := dr.Row
-			row = buildHistoryWorkloadRow(r, orDefault(r.Team, "-"), showCluster, showSubtype, showMode, showUtilization, sparklines)
+			row = buildHistoryWorkloadRow(r, orDefault(r.Team, "-"), vis, sparklines)
 			totalAvgPods += r.AvgPods
 			totalAvgCPU += r.AvgCPUVCPU
 			totalAvgMem += r.AvgMemoryGB
@@ -132,14 +131,14 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 
 	// Total row
 	var totalRow []string
-	if showCluster {
+	if vis.Cluster {
 		totalRow = append(totalRow, "")
 	}
 	totalRow = append(totalRow, "TOTAL", "")
-	if showSubtype {
+	if vis.Subtype {
 		totalRow = append(totalRow, "")
 	}
-	if showMode {
+	if vis.Mode {
 		totalRow = append(totalRow, "")
 	}
 	totalRow = append(totalRow,
@@ -151,7 +150,7 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 		"", // trend
 		"", // spot
 	)
-	if showUtilization {
+	if vis.Utilization {
 		totalRow = append(totalRow, "", "", fmt.Sprintf("$%.4f", totalWaste))
 	}
 	totalIdx := len(rows)
@@ -205,23 +204,23 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, showCluster, showSubtyp
 }
 
 // buildHistoryWorkloadRow creates a table row for a single history workload.
-func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, showCluster, showSubtype, showMode, showUtilization bool, sparklines map[bigquery.WorkloadKey]string) []string {
+func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, vis ColumnVisibility, sparklines map[bigquery.WorkloadKey]string) []string {
 	spot := ""
 	if r.HasSpot {
 		spot = "yes"
 	}
 	var row []string
-	if showCluster {
+	if vis.Cluster {
 		row = append(row, orDefault(r.ClusterName, "-"))
 	}
 	row = append(row,
 		teamCol,
 		orDefault(r.Workload, "-"),
 	)
-	if showSubtype {
+	if vis.Subtype {
 		row = append(row, orDefault(r.Subtype, "-"))
 	}
-	if showMode {
+	if vis.Mode {
 		row = append(row, costModeShort(r.CostMode))
 	}
 
@@ -240,7 +239,7 @@ func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, showClus
 		spark,
 		spot,
 	)
-	if showUtilization {
+	if vis.Utilization {
 		if r.AvgCPUUtil != nil {
 			row = append(row,
 				fmt.Sprintf("%.0f%%", *r.AvgCPUUtil*100),

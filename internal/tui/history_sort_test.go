@@ -110,18 +110,18 @@ func TestSortHistoryTeamGroups(t *testing.T) {
 
 func TestHistoryColumnForKey(t *testing.T) {
 	// Default columns: TEAM(1), WORKLOAD(2), PODS(3), CPU(4), MEM(5), $/HR(6), TOTAL(7), WASTE not shown
-	col, ok := HistoryColumnForKey('1', false, false, false, false)
+	col, ok := HistoryColumnForKey('1', ColumnVisibility{})
 	if !ok || col != HistSortByTeam {
 		t.Errorf("key '1' should map to team, got %d ok=%v", col, ok)
 	}
 
-	col, ok = HistoryColumnForKey('7', false, false, false, false)
+	col, ok = HistoryColumnForKey('7', ColumnVisibility{})
 	if !ok || col != HistSortByTotalCost {
 		t.Errorf("key '7' should map to total cost, got %d ok=%v", col, ok)
 	}
 
 	// Invalid key
-	_, ok = HistoryColumnForKey('9', false, false, false, false)
+	_, ok = HistoryColumnForKey('9', ColumnVisibility{})
 	if ok {
 		t.Error("key '9' should be out of range without utilization columns")
 	}
@@ -199,12 +199,12 @@ func TestSortHistoryRowsByCluster(t *testing.T) {
 
 func TestHistoryColumnForKeyWithCluster(t *testing.T) {
 	// With cluster visible: CLUSTER(1), TEAM(2), WORKLOAD(3), ...
-	col, ok := HistoryColumnForKey('1', true, false, false, false)
+	col, ok := HistoryColumnForKey('1', ColumnVisibility{Cluster: true})
 	if !ok || col != HistSortByCluster {
 		t.Errorf("key '1' with cluster should map to cluster, got %d ok=%v", col, ok)
 	}
 
-	col, ok = HistoryColumnForKey('2', true, false, false, false)
+	col, ok = HistoryColumnForKey('2', ColumnVisibility{Cluster: true})
 	if !ok || col != HistSortByTeam {
 		t.Errorf("key '2' with cluster should map to team, got %d ok=%v", col, ok)
 	}

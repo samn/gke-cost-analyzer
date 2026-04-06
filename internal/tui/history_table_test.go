@@ -27,7 +27,7 @@ func TestRenderHistoryTableBasic(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, false, false, false, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(rows, ColumnVisibility{}, DefaultHistorySort(), -1, nil)
 
 	if !strings.Contains(result, "TEAM") {
 		t.Error("should contain TEAM header")
@@ -65,7 +65,7 @@ func TestRenderHistoryTableWithSparklines(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, false, false, false, false, DefaultHistorySort(), -1, sparklines)
+	result := RenderHistoryTable(rows, ColumnVisibility{}, DefaultHistorySort(), -1, sparklines)
 	if !strings.Contains(result, "▁▂▃▄▅▆▇█") {
 		t.Errorf("should contain sparkline, got:\n%s", result)
 	}
@@ -100,7 +100,7 @@ func TestRenderHistoryTableGrouped(t *testing.T) {
 		t.Error("second row should be workload detail")
 	}
 
-	result := RenderHistoryTable(displayRows, false, false, false, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(displayRows, ColumnVisibility{}, DefaultHistorySort(), -1, nil)
 	if !strings.Contains(result, "platform") {
 		t.Error("should contain team name")
 	}
@@ -161,7 +161,7 @@ func TestRenderHistoryTableWithUtilization(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, false, false, true, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(rows, ColumnVisibility{Utilization: true}, DefaultHistorySort(), -1, nil)
 	if !strings.Contains(result, "CPU%") {
 		t.Error("should contain CPU% header with utilization")
 	}
@@ -182,7 +182,7 @@ func TestRenderHistoryTableWithSubtype(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, false, true, false, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(rows, ColumnVisibility{Subtype: true}, DefaultHistorySort(), -1, nil)
 	if !strings.Contains(result, "SUBTYPE") {
 		t.Error("should contain SUBTYPE header")
 	}
@@ -213,7 +213,7 @@ func TestRenderHistoryTableWithCluster(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, true, false, false, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(rows, ColumnVisibility{Cluster: true}, DefaultHistorySort(), -1, nil)
 	if !strings.Contains(result, "CLUSTER") {
 		t.Error("should contain CLUSTER header")
 	}
@@ -236,7 +236,7 @@ func TestRenderHistoryTableSpotIndicator(t *testing.T) {
 		},
 	}
 
-	result := RenderHistoryTable(rows, false, false, false, false, DefaultHistorySort(), -1, nil)
+	result := RenderHistoryTable(rows, ColumnVisibility{}, DefaultHistorySort(), -1, nil)
 	if !strings.Contains(result, "yes") {
 		t.Error("should contain 'yes' for spot workload")
 	}
