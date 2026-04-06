@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
@@ -95,7 +95,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	}
 
 	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)
 	}
