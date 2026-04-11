@@ -54,6 +54,25 @@ All user-facing changes must be documented in `CHANGELOG.md` following the
 `[Unreleased]` section as you make changes. Categories: Added, Changed,
 Deprecated, Removed, Fixed, Security.
 
+## Documentation
+
+Keep documentation accurate and up to date whenever you make changes:
+
+- **README.md**: Update when adding/removing commands, flags, features, or
+  changing build/release/Docker workflows. The Features list, Usage section
+  (command options and interactive keys), Permissions table, and
+  Installation/Docker instructions must all reflect the current implementation.
+- **SPEC.md**: Update when changing internal behavior — data pipeline, cost
+  calculation, BigQuery schema, InsertID format, filtering logic, Prometheus
+  queries, or edge case handling. SPEC.md is the technical reference; it must
+  match the code.
+- **CHANGELOG.md**: Add an entry under `[Unreleased]` for every user-facing
+  change (see above).
+- **Command descriptions** (`cmd/*.go`): Keep `Short` and `Long` descriptions
+  accurate when command behavior changes.
+- **Cobra flag definitions**: When adding or changing a CLI flag, update both
+  the code and the README Usage section for that command.
+
 ## Pre-commit checks and CI
 
 Before committing, run the same checks that CI runs. CI executes
