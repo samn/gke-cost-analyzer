@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- README: Go version prerequisite updated from 1.25+ to 1.26+ to match go.mod
+- README: Docker section updated to reflect current Dockerfile (copies pre-built binary) and added GHCR pull instructions
+- README: Features list updated with all current capabilities (history, utilization, aberration detection, unmatched-pods, env auto-detection, namespace exclusion)
+- README: Watch and record command options now document all flags including --mode, --prometheus-url, --dry-run, --output-file, --exclude-namespaces, --trend-threshold
+- README: Added missing unmatched-pods and version command documentation
+- README: Added environment auto-detection section
+- SPEC: Fixed InsertID format to include the cost_mode field (matching implementation)
+- SPEC: Updated Pod Discovery section to reflect --mode flag support for both Autopilot and Standard node filtering
+- Fixed root command Short/Long descriptions to say "GKE workloads" instead of "GKE Autopilot workloads"
+
 ## [0.6.1] - 2026-04-06
 
 ### Fixed

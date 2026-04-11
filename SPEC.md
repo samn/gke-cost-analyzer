@@ -196,9 +196,13 @@ Pods are listed from the Kubernetes API with a field selector
 `status.phase=Running`. Multi-namespace or single-namespace listing is
 supported via `--namespace`.
 
-**Autopilot filtering**: Only pods on nodes with the `gk3-` name prefix are
-included. Standard GKE nodes use `gke-` and are filtered out. Unscheduled pods
-(empty `NodeName`) are also excluded.
+**Node filtering**: Pods are filtered by node type according to the `--mode`
+flag. In `autopilot` mode, only pods on nodes with the `gk3-` name prefix are
+included. In `standard` mode, only pods on `gke-` nodes are included. In `all`
+mode (default), both are included. Detection also falls back to pod labels
+(`autopilot.gke.io/` prefix for Autopilot, `cloud.google.com/gke-nodepool` for
+Standard). Pods on unrecognized nodes (neither prefix) are logged as warnings
+and excluded. Unscheduled pods (empty `NodeName`) are also excluded.
 
 **Namespace exclusion**: Pods in namespaces listed in `--exclude-namespaces`
 (default `kube-system,gmp-system`) are filtered out post-fetch. This removes
@@ -231,7 +235,8 @@ started), it is stored as zero time.
 - **Pods with no containers**: Produce zero CPU/memory (valid but unusual).
 - **Nil StartTime**: Stored as zero time; cost calculator treats this as 0
   duration → $0 cost.
-- **Non-Autopilot pods**: Filtered out by `gk3-` node name check.
+- **Unrecognized nodes**: Pods on nodes matching neither `gk3-` (Autopilot)
+  nor `gke-` (Standard) prefix are excluded with a warning.
 - **Excluded namespaces**: Pods in excluded namespaces are dropped post-fetch.
   Empty exclusion list disables the filter.
 - **Kubernetes API errors**: Propagated to the caller.
@@ -441,10 +446,10 @@ when `--prometheus-url` is configured and utilization data is available.
 - Clustered by `team`, `workload`
 
 **InsertID** for deduplication:
-`{project}-{cluster}-{namespace}-{team}-{workload}-{subtype}-{is_spot}-{timestamp_nanos}`
+`{project}-{cluster}-{namespace}-{team}-{workload}-{subtype}-{is_spot}-{cost_mode}-{timestamp_nanos}`
 
-This ensures that rows differing only by subtype or spot status get unique IDs,
-preventing silent deduplication.
+This ensures that rows differing only by subtype, spot status, or cost mode get
+unique IDs, preventing silent deduplication.
 
 **Snapshot timing**: The timestamp is captured **before** listing pods, so it
 reflects the start of the snapshot window rather than when processing completed.

@@ -27,8 +27,8 @@ var newDetector = func() *envdefaults.Detector {
 
 var rootCmd = &cobra.Command{
 	Use:   "gke-cost-analyzer",
-	Short: "Analyze costs of GKE Autopilot workloads",
-	Long:  "A CLI tool to monitor and analyze costs of GKE Autopilot workloads, with support for BigQuery export.",
+	Short: "Analyze costs of GKE workloads",
+	Long:  "A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard), with support for real-time display and BigQuery export.",
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		d := newDetector()
 		applyDefaults(d, cmd)
