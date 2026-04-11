@@ -4,19 +4,24 @@ A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard
 
 ## Features
 
-- **Real-time cost monitoring** (`watch`): Displays a live table of GKE workload costs aggregated by configurable labels
+- **Real-time cost monitoring** (`watch`): Interactive TUI with live cost table, team rollup/drill-down, column sorting, and cost aberration detection via EWMA trend tracking
 - **Standard GKE cost estimation**: Per-node proportional attribution for standard GKE workloads based on Compute Engine pricing
-- **BigQuery recording** (`record`): Periodically writes cost snapshots to BigQuery for historical analysis
+- **Historical cost analysis** (`history`): Query BigQuery for recorded cost data with an interactive TUI, sparkline trend visualizations, and optional filters by cluster, namespace, and team
+- **BigQuery recording** (`record`): Periodically writes cost snapshots to BigQuery for historical analysis, with optional Parquet export via `--dry-run --output-file`
 - **Automated setup** (`setup`): Creates BigQuery dataset and table with the correct schema
-- **Price caching**: Fetches Autopilot pricing from the Cloud Billing Catalog API and caches locally
+- **Utilization metrics**: Automatic CPU/memory utilization from GCP Managed Prometheus (or custom `--prometheus-url`), with efficiency scoring and wasted cost calculation
+- **Unmatched pod detection** (`unmatched-pods`): Find running pods missing team or workload labels, grouped by base name
+- **Price caching**: Fetches Autopilot and Compute Engine pricing from the Cloud Billing Catalog API and caches locally for 24 hours
 - **SPOT support**: Automatically detects and separately prices Spot pods
 - **Configurable label hierarchy**: Group costs by team, workload, and subtype using custom label names
+- **Environment auto-detection**: `--region`, `--project`, and `--cluster-name` are auto-detected from GCE metadata or kubeconfig context
+- **Namespace exclusion**: System namespaces (`kube-system`, `gmp-system`) are excluded by default via `--exclude-namespaces`
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Access to a GKE cluster (via kubeconfig)
 - GCP credentials (for BigQuery features)
 
@@ -28,22 +33,23 @@ go build -o gke-cost-analyzer .
 
 ### Docker
 
-Build an image from a GitHub Release binary:
+Pre-built Docker images are published to GitHub Container Registry on each
+release:
 
 ```bash
-# Uses the latest release by default
-docker build -t gke-cost-analyzer .
+# Pull the latest release
+docker pull ghcr.io/samn/gke-cost-analyzer:latest
 
-# Pin to a specific version
-docker build --build-arg VERSION=v0.1.0 -t gke-cost-analyzer:0.1.0 .
+# Pull a specific version
+docker pull ghcr.io/samn/gke-cost-analyzer:v0.6.1
 ```
 
 Run with arguments passed directly:
 
 ```bash
-docker run --rm gke-cost-analyzer version
+docker run --rm ghcr.io/samn/gke-cost-analyzer version
 
-docker run --rm gke-cost-analyzer record \
+docker run --rm ghcr.io/samn/gke-cost-analyzer record \
   --region us-central1 \
   --project my-gcp-project \
   --cluster-name my-cluster
@@ -58,7 +64,7 @@ docker run --rm \
   --user "$(id -u):$(id -g)" \
   -v "$HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro" \
   -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
-  gke-cost-analyzer history 7d \
+  ghcr.io/samn/gke-cost-analyzer history 7d \
   --project my-gcp-project
 ```
 
@@ -66,6 +72,16 @@ If you haven't already, generate ADC with:
 
 ```bash
 gcloud auth application-default login
+```
+
+#### Building locally
+
+To build a Docker image from source, first build the binary then build the
+image:
+
+```bash
+make build
+docker build -t gke-cost-analyzer .
 ```
 
 ## Permissions
@@ -126,13 +142,19 @@ gke-cost-analyzer watch --region us-central1
 ```
 
 Options:
-- `--region` (required): GCP region for pricing lookup
+- `--region` (required): GCP region for pricing lookup (auto-detected from environment)
 - `--mode`: Cost calculation mode: `autopilot`, `standard`, or `all` (default: `all`)
 - `--interval`: Refresh interval (default: 10s)
 - `--namespace`: Filter to a specific namespace (default: all)
+- `--project`: GCP project ID for Managed Prometheus utilization (auto-detected)
+- `--prometheus-url`: Custom Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)
+- `--exclude-namespaces`: Namespaces to exclude (default: `kube-system,gmp-system`)
+- `--trend-threshold`: Z-score threshold for cost aberration detection (default: 3.0, 0 to disable)
 - `--team-label`: Pod label for team grouping (default: "team")
 - `--workload-label`: Pod label for workload grouping (default: "app")
 - `--subtype-label`: Pod label for subtype grouping (optional)
+
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `e` toggle event log, `[`/`]` scroll event log, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
 
 ### Record costs to BigQuery
 
@@ -155,12 +177,17 @@ gke-cost-analyzer record \
 ```
 
 Options:
-- `--region` (required): GCP region for pricing lookup
-- `--project` (required): GCP project ID for BigQuery
-- `--cluster-name` (required): GKE cluster name
+- `--region` (required): GCP region for pricing lookup (auto-detected from environment)
+- `--project` (required): GCP project ID for BigQuery (auto-detected)
+- `--cluster-name` (required): GKE cluster name (auto-detected)
 - `--dataset`: BigQuery dataset name (default: "gke_costs")
 - `--table`: BigQuery table name (default: "cost_snapshots")
 - `--interval`: Snapshot interval (default: 5m)
+- `--mode`: Cost calculation mode: `autopilot`, `standard`, or `all` (default: `all`)
+- `--dry-run`: Log rows to stdout without writing to BigQuery
+- `--output-file`: Append dry-run snapshots to a local Parquet file (requires `--dry-run`)
+- `--prometheus-url`: Custom Prometheus API base URL (defaults to GCP Managed Prometheus)
+- `--exclude-namespaces`: Namespaces to exclude (default: `kube-system,gmp-system`)
 
 ### View historical costs
 
@@ -184,6 +211,31 @@ Options:
 - `--all-clusters`: Show costs from all clusters (adds a CLUSTER column)
 - `--namespace`: Filter to a specific namespace
 - `--team`: Filter by team name
+
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
+
+### Find pods missing labels
+
+```bash
+gke-cost-analyzer unmatched-pods
+```
+
+Lists running pods that are missing the configured team or workload labels,
+grouped by base name (with Kubernetes random suffixes stripped) and namespace.
+Useful for finding workloads that won't appear in cost attribution.
+
+### Other commands
+
+```bash
+# Print version, commit, and build date
+gke-cost-analyzer version
+```
+
+### Environment auto-detection
+
+`--region`, `--project`, and `--cluster-name` are automatically detected from
+the GCE metadata server (when running on GKE) or from the current kubeconfig
+context. Explicit CLI flags always take priority over detected values.
 
 ### Example BigQuery queries
 
@@ -253,7 +305,7 @@ prek install
 go test ./...
 
 # Run linter
-golangci-lint run ./...
+golangci-lint run
 
 # Build
 go build ./...
@@ -263,9 +315,10 @@ go build ./...
 
 Releases are automated via GitHub Actions. Pushing a `v`-prefixed tag triggers
 the [release workflow](.github/workflows/release.yaml), which runs tests, builds
-a static `linux/amd64` binary, compresses it with gzip, and creates a GitHub
-Release with changelog notes. Release artifacts are named
-`gke-cost-analyzer-<os>-<arch>.gz`.
+a static `linux/amd64` binary, compresses it with gzip, creates a GitHub
+Release with changelog notes, and pushes a Docker image to
+`ghcr.io/samn/gke-cost-analyzer` (tagged with the version and `latest`).
+Release artifacts are named `gke-cost-analyzer-<os>-<arch>.gz`.
 
 ### Steps
 
