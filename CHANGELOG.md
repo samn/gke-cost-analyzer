@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Upgraded all GitHub Actions to latest major versions and pinned to commit SHAs: `actions/checkout` v4 → v6, `actions/cache` v4 → v5, `jdx/mise-action` v2 → v4, `softprops/action-gh-release` v2 → v3, `docker/login-action` v3 → v4, `docker/setup-buildx-action` v3 → v4, `docker/build-push-action` v6 → v7
+
 ### Fixed
 - README: Go version prerequisite updated from 1.25+ to 1.26+ to match go.mod
 - README: Docker section updated to reflect current Dockerfile (copies pre-built binary) and added GHCR pull instructions
