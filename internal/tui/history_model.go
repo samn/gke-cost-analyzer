@@ -136,7 +136,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Build sparklines
-		grouped := bigquery.BuildSparklines(msg.series)
+		grouped := bigquery.BuildSparklinesWithGaps(msg.series, m.bucketSecs)
 		m.sparklines = make(map[bigquery.WorkloadKey]string, len(grouped))
 		for key, values := range grouped {
 			m.sparklines[key] = Sparkline(values)
