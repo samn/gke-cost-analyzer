@@ -15,6 +15,16 @@ import (
 
 const bigqueryAPIBase = "https://bigquery.googleapis.com/bigquery/v2"
 
+// defaultHTTPTimeout bounds BigQuery API requests so a hung backend can't
+// stall a daemon loop indefinitely.
+const defaultHTTPTimeout = 30 * time.Second
+
+// newDefaultHTTPClient returns the default HTTP client used when no custom
+// client is configured.
+func newDefaultHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultHTTPTimeout}
+}
+
 // Writer inserts cost snapshot rows into BigQuery using the streaming insert API.
 type Writer struct {
 	httpClient *http.Client
@@ -40,7 +50,7 @@ func WithWriterBaseURL(url string) WriterOption {
 // NewWriter creates a BigQuery streaming insert writer.
 func NewWriter(project, dataset, table string, opts ...WriterOption) *Writer {
 	w := &Writer{
-		httpClient: http.DefaultClient,
+		httpClient: newDefaultHTTPClient(),
 		project:    project,
 		dataset:    dataset,
 		table:      table,

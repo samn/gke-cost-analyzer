@@ -458,3 +458,17 @@ func TestInsertIDIncludesCostMode(t *testing.T) {
 		t.Error("rows with different cost_mode must have different InsertIDs")
 	}
 }
+
+func TestDefaultClientsHaveTimeout(t *testing.T) {
+	// A hung backend must not wedge the daemon forever: every default HTTP
+	// client needs a timeout.
+	if NewWriter("p", "d", "t").httpClient.Timeout == 0 {
+		t.Error("writer default client has no timeout")
+	}
+	if NewReader("p", "d", "t").httpClient.Timeout == 0 {
+		t.Error("reader default client has no timeout")
+	}
+	if NewSetupClient("p").httpClient.Timeout == 0 {
+		t.Error("setup default client has no timeout")
+	}
+}

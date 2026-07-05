@@ -60,7 +60,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--output-file requires --dry-run")
 	}
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	var autopilotCalc *cost.Calculator
@@ -123,7 +123,6 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 
 	lc := labelConfig()
-	intervalSecs := int64(recordInterval.Seconds())
 	_, postFilterNS := listNamespace()
 	sc := snapshotConfig{
 		projectID:       project,
@@ -135,10 +134,37 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	ticker := time.NewTicker(recordInterval)
 	defer ticker.Stop()
 
-	// Run once immediately
-	if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// takeSnapshot bounds each snapshot by the interval so a hung backend
+	// can't wedge the loop, records cost over the actual elapsed time since
+	// the last successful snapshot, and refreshes prices when the cache TTL
+	// lapses (a long-running daemon should not use launch-time prices
+	// forever).
+	var lastSnapshot time.Time
+	pricesLoadedAt := time.Now()
+	takeSnapshot := func() {
+		if time.Since(pricesLoadedAt) > pricing.DefaultCacheTTL {
+			if err := refreshPrices(ctx, &autopilotCalc, &standardCalc); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: refreshing prices failed, keeping previous prices: %v\n", err)
+			}
+			// Even on failure, wait a full TTL before retrying to avoid
+			// hammering the billing API every tick.
+			pricesLoadedAt = time.Now()
+		}
+
+		now := time.Now()
+		intervalSecs := snapshotIntervalSecs(lastSnapshot, now, recordInterval)
+		snapCtx, cancelSnap := context.WithTimeout(ctx, recordInterval)
+		err := recordSnapshot(snapCtx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile)
+		cancelSnap()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
+			return
+		}
+		lastSnapshot = now
 	}
+
+	// Run once immediately
+	takeSnapshot()
 
 	for {
 		select {
@@ -146,11 +172,44 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
-				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
-			}
+			takeSnapshot()
 		}
 	}
+}
+
+// snapshotIntervalSecs returns the cost window for the next snapshot: the
+// actual elapsed time since the last successful snapshot, so missed or slow
+// ticks don't permanently undercount cost. The first snapshot (and any clock
+// anomaly) uses the nominal interval.
+func snapshotIntervalSecs(lastSnapshot, now time.Time, nominal time.Duration) int64 {
+	if lastSnapshot.IsZero() {
+		return int64(nominal.Seconds())
+	}
+	elapsed := now.Sub(lastSnapshot)
+	if elapsed <= 0 {
+		return int64(nominal.Seconds())
+	}
+	return int64(elapsed.Seconds())
+}
+
+// refreshPrices reloads pricing (via cache or API) and swaps in new
+// calculators. On error the existing calculators are left untouched.
+func refreshPrices(ctx context.Context, autopilotCalc **cost.Calculator, standardCalc **cost.StandardCalculator) error {
+	if *autopilotCalc != nil {
+		prices, err := loadPrices(ctx)
+		if err != nil {
+			return err
+		}
+		*autopilotCalc = cost.NewCalculator(region, pricing.FromPrices(prices), nil)
+	}
+	if *standardCalc != nil {
+		computePrices, err := loadComputePrices(ctx)
+		if err != nil {
+			return err
+		}
+		*standardCalc = cost.NewStandardCalculator(region, pricing.FromComputePrices(computePrices), nil)
+	}
+	return nil
 }
 
 // snapshotConfig holds the metadata needed to convert aggregated costs to BigQuery snapshots.

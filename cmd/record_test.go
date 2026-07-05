@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -981,5 +982,47 @@ func TestRecordSnapshotNamespaceFilterPreservesShares(t *testing.T) {
 	want := 0.25*0.12 + 0.25*0.064
 	if diff := got[0].TotalCost - want; diff > 1e-9 || diff < -1e-9 {
 		t.Errorf("total cost = %f, want %f (share from full pod set)", got[0].TotalCost, want)
+	}
+}
+
+func TestShutdownSignalsIncludeSIGTERM(t *testing.T) {
+	// Kubernetes sends SIGTERM on pod termination; a daemon that only traps
+	// SIGINT never shuts down gracefully in-cluster.
+	foundTerm, foundInt := false, false
+	for _, s := range shutdownSignals {
+		if s == syscall.SIGTERM {
+			foundTerm = true
+		}
+		if s == os.Interrupt {
+			foundInt = true
+		}
+	}
+	if !foundTerm {
+		t.Error("shutdownSignals must include syscall.SIGTERM")
+	}
+	if !foundInt {
+		t.Error("shutdownSignals must include os.Interrupt")
+	}
+}
+
+func TestSnapshotIntervalSecs(t *testing.T) {
+	nominal := 5 * time.Minute
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	// First snapshot (no previous): use the nominal interval.
+	if got := snapshotIntervalSecs(time.Time{}, now, nominal); got != 300 {
+		t.Errorf("first snapshot interval = %d, want 300", got)
+	}
+
+	// Steady state: actual elapsed time, so missed/slow ticks don't
+	// permanently undercount cost.
+	last := now.Add(-7 * time.Minute) // one tick was missed
+	if got := snapshotIntervalSecs(last, now, nominal); got != 420 {
+		t.Errorf("elapsed interval = %d, want 420", got)
+	}
+
+	// Clock weirdness (now before last) falls back to nominal.
+	if got := snapshotIntervalSecs(now.Add(time.Minute), now, nominal); got != 300 {
+		t.Errorf("negative elapsed should fall back to nominal, got %d", got)
 	}
 }

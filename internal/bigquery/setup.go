@@ -32,7 +32,7 @@ func WithSetupBaseURL(url string) SetupOption {
 // NewSetupClient creates a new SetupClient.
 func NewSetupClient(project string, opts ...SetupOption) *SetupClient {
 	sc := &SetupClient{
-		httpClient: http.DefaultClient,
+		httpClient: newDefaultHTTPClient(),
 		project:    project,
 		baseURL:    bigqueryAPIBase,
 	}

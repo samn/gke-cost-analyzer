@@ -39,7 +39,7 @@ func WithReaderBaseURL(url string) ReaderOption {
 // NewReader creates a BigQuery reader for querying cost data.
 func NewReader(project, dataset, table string, opts ...ReaderOption) *Reader {
 	r := &Reader{
-		httpClient: http.DefaultClient,
+		httpClient: newDefaultHTTPClient(),
 		project:    project,
 		dataset:    dataset,
 		table:      table,

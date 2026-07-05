@@ -12,8 +12,11 @@ import (
 const (
 	defaultCacheDir      = "gke-cost-analyzer"
 	defaultCacheFileName = "prices.json"
-	defaultCacheTTL      = 24 * time.Hour
 )
+
+// DefaultCacheTTL is how long cached prices stay fresh. Long-running daemons
+// also use it to decide when to refresh their in-memory price tables.
+const DefaultCacheTTL = 24 * time.Hour
 
 // CachedPrices is the on-disk format for cached pricing data.
 type CachedPrices struct {
@@ -78,7 +81,7 @@ func NewCache(opts ...CacheOption) (*Cache, error) {
 
 	c := &Cache{
 		dir:      filepath.Join(cacheDir, defaultCacheDir),
-		ttl:      defaultCacheTTL,
+		ttl:      DefaultCacheTTL,
 		now:      time.Now,
 		fileName: defaultCacheFileName,
 	}

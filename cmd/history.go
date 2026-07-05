@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/signal"
 	"strconv"
 	"time"
@@ -53,7 +52,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	fmt.Println("Authenticating with BigQuery...")

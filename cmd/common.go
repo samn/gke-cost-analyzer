@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"syscall"
+	"time"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
 	"github.com/samn/gke-cost-analyzer/internal/kube"
@@ -13,6 +15,14 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
+
+// shutdownSignals are the signals that trigger graceful shutdown. SIGTERM is
+// what Kubernetes (and Docker) send on pod termination; SIGINT covers Ctrl-C.
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+// gcpHTTPTimeout bounds each GCP API request so a hung backend cannot wedge
+// a daemon loop indefinitely.
+const gcpHTTPTimeout = 30 * time.Second
 
 // podLister is an interface for listing pods, enabling testing without a real cluster.
 type podLister interface {
@@ -146,7 +156,9 @@ func defaultGCPHTTPClient(ctx context.Context, scopes ...string) (*http.Client, 
 	if err != nil {
 		return nil, fmt.Errorf("getting default credentials: %w", err)
 	}
-	return oauth2.NewClient(ctx, ts), nil
+	client := oauth2.NewClient(ctx, ts)
+	client.Timeout = gcpHTTPTimeout
+	return client, nil
 }
 
 // newPromClient creates a Prometheus client based on the configuration:

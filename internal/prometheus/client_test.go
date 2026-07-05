@@ -495,3 +495,11 @@ func TestGMPBaseURLUsedByClient(t *testing.T) {
 		t.Errorf("request path = %q, want %q", requestedPath, wantPath)
 	}
 }
+
+func TestDefaultClientHasTimeout(t *testing.T) {
+	// A hung Prometheus endpoint must not stall snapshots indefinitely.
+	c := NewClient("http://prom.example")
+	if c.httpClient.Timeout == 0 {
+		t.Error("prometheus default client has no timeout")
+	}
+}

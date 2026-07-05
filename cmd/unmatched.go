@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/signal"
 	"sort"
 	"strings"
@@ -23,7 +22,7 @@ var unmatchedCmd = &cobra.Command{
 }
 
 func runUnmatched(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	fmt.Println("Connecting to Kubernetes cluster...")
