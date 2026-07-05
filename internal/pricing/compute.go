@@ -13,18 +13,41 @@ const (
 )
 
 // computeSKURegex matches Compute Engine instance Core/Ram SKUs.
-// Some families include an architecture qualifier (e.g. "AMD", "Arm") between
-// the family name and "Instance".
+// Some families include a qualifier between the family name and "Instance":
+// an architecture marker ("AMD", "Arm"), "Predefined" (N1), or a category
+// word ("Memory-optimized" for M3). Qualifiers are captured so that variant
+// SKUs with different pricing ("Custom", "Sole Tenancy") can be rejected —
+// otherwise e.g. "N2 Custom Instance Core" would clobber the plain N2 price.
 // Examples:
 //   - "N2 Instance Core running in Americas"
 //   - "Spot Preemptible N2 Instance Core running in Americas"
 //   - "E2 Instance Ram running in EMEA"
 //   - "T2D AMD Instance Core running in Americas"
-//   - "Spot Preemptible T2D AMD Instance Core running in Americas"
-//   - "T2A Arm Instance Core running in Americas"
+//   - "N1 Predefined Instance Core running in Americas"
+//   - "M3 Memory-optimized Instance Core running in Americas"
 var computeSKURegex = regexp.MustCompile(
-	`^(Spot Preemptible )?(N2|E2|N1|C2|C2D|C3|C3D|C4|C4A|T2D|T2A|N2D|N4|M3|A2|A3|G2|H3|X4|Z3)(?: \w+)? Instance (Core|Ram) running in`,
+	`^(Spot Preemptible )?(N2|E2|N1|C2|C2D|C3|C3D|C4|C4A|C4D|T2D|T2A|N2D|N4|M1|M2|M3|M4|A2|A3|G2|H3|H4D|X4|Z3)(?: ([A-Za-z-]+(?: [A-Za-z-]+)*?))? Instance (Core|Ram) running in`,
 )
+
+// computeSKUAltRegex matches families whose SKU descriptions don't carry the
+// family token (older catalog naming).
+var computeSKUAltRegex = regexp.MustCompile(
+	`^(Spot Preemptible )?(Compute optimized|Memory-optimized Instance) (Core|Ram) running in`,
+)
+
+// altSKUFamilies maps alternate SKU description prefixes to machine families.
+// M2 is billed as M1 plus an "Upgrade Premium" SKU; the base rate maps to m1.
+var altSKUFamilies = map[string]string{
+	"Compute optimized":         "c2",
+	"Memory-optimized Instance": "m1",
+}
+
+// rejectedSKUQualifiers are variant qualifiers with pricing that differs from
+// the plain family SKU; matching them would corrupt the family price.
+var rejectedSKUQualifiers = map[string]bool{
+	"Custom":       true,
+	"Sole Tenancy": true,
+}
 
 // ComputePrice represents the unit price for a specific machine family resource in a region and tier.
 type ComputePrice struct {
@@ -53,16 +76,20 @@ func (cpt ComputePriceTable) Lookup(region, family string, rt ResourceType, tier
 
 // FromComputePrices builds a ComputePriceTable from a slice of ComputePrice values.
 // Unlike Autopilot (per-mCPU), Compute Engine CPU prices are already per-vCPU-hour —
-// no conversion is needed.
+// no conversion is needed. Duplicate keys keep the first price seen so the
+// result doesn't depend on catalog page ordering.
 func FromComputePrices(prices []ComputePrice) ComputePriceTable {
 	cpt := make(ComputePriceTable, len(prices))
 	for _, p := range prices {
-		cpt[ComputePriceKey{
+		key := ComputePriceKey{
 			Region:        p.Region,
 			MachineFamily: p.MachineFamily,
 			ResourceType:  p.ResourceType,
 			Tier:          p.Tier,
-		}] = p.UnitPrice
+		}
+		if _, exists := cpt[key]; !exists {
+			cpt[key] = p.UnitPrice
+		}
 	}
 	return cpt
 }
@@ -103,16 +130,23 @@ func (cc *CatalogClient) fetchSKUPageForService(ctx context.Context, serviceID, 
 
 // extractComputePrices extracts Compute Engine instance pricing from a SKU.
 func extractComputePrices(sku catalogSKU) []ComputePrice {
-	matches := computeSKURegex.FindStringSubmatch(sku.Description)
-	if matches == nil {
+	var isSpot bool
+	var family, resourceKind string
+
+	if matches := computeSKURegex.FindStringSubmatch(sku.Description); matches != nil {
+		if rejectedSKUQualifiers[matches[3]] {
+			return nil
+		}
+		isSpot = matches[1] != ""
+		family = strings.ToLower(matches[2])
+		resourceKind = matches[4]
+	} else if matches := computeSKUAltRegex.FindStringSubmatch(sku.Description); matches != nil {
+		isSpot = matches[1] != ""
+		family = altSKUFamilies[matches[2]]
+		resourceKind = matches[3]
+	} else {
 		return nil
 	}
-
-	isSpot := matches[1] != ""
-	familyUpper := matches[2]
-	resourceKind := matches[3]
-
-	family := strings.ToLower(familyUpper)
 
 	var rt ResourceType
 	switch resourceKind {
