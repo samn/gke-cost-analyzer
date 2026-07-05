@@ -189,13 +189,13 @@ func TestQueryAggregatedCostsWithFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(receivedSQL, "cluster_name = 'prod-cluster'") {
+	if !strings.Contains(receivedSQL, "cluster_name = @cluster_name") {
 		t.Errorf("SQL should contain cluster filter, got: %s", receivedSQL)
 	}
-	if !strings.Contains(receivedSQL, "namespace = 'default'") {
+	if !strings.Contains(receivedSQL, "namespace = @namespace") {
 		t.Errorf("SQL should contain namespace filter, got: %s", receivedSQL)
 	}
-	if !strings.Contains(receivedSQL, "team = 'platform'") {
+	if !strings.Contains(receivedSQL, "team = @team") {
 		t.Errorf("SQL should contain team filter, got: %s", receivedSQL)
 	}
 }
@@ -362,29 +362,199 @@ func TestQueryEmptyResults(t *testing.T) {
 }
 
 func TestBuildFilterClause(t *testing.T) {
-	// Empty filters — no clause
-	got := buildFilterClause(QueryFilters{})
-	if got != "" {
-		t.Errorf("empty filters should produce empty clause, got %q", got)
+	// Empty filters — no clause, no params
+	clause, params := buildFilterClause(QueryFilters{})
+	if clause != "" || len(params) != 0 {
+		t.Errorf("empty filters should produce empty clause/params, got %q / %v", clause, params)
 	}
 
-	// Single cluster filter
-	got = buildFilterClause(QueryFilters{ClusterName: "prod"})
-	if !strings.Contains(got, "cluster_name = 'prod'") {
-		t.Errorf("single cluster filter expected, got %q", got)
+	// Single cluster filter — named parameter, not interpolated value
+	clause, params = buildFilterClause(QueryFilters{ClusterName: "prod"})
+	if !strings.Contains(clause, "cluster_name = @cluster_name") {
+		t.Errorf("expected parameterized cluster filter, got %q", clause)
+	}
+	if len(params) != 1 || params[0].Name != "cluster_name" || params[0].ParameterValue.Value != "prod" {
+		t.Errorf("unexpected params: %+v", params)
 	}
 
 	// All filters
-	got = buildFilterClause(QueryFilters{ClusterName: "prod", Namespace: "default", Team: "platform"})
-	if !strings.Contains(got, "cluster_name = 'prod'") || !strings.Contains(got, "namespace = 'default'") || !strings.Contains(got, "team = 'platform'") {
-		t.Errorf("all filters expected, got %q", got)
+	clause, params = buildFilterClause(QueryFilters{ClusterName: "prod", Namespace: "default", Team: "platform"})
+	if !strings.Contains(clause, "cluster_name = @cluster_name") ||
+		!strings.Contains(clause, "namespace = @namespace") ||
+		!strings.Contains(clause, "team = @team") {
+		t.Errorf("all filters expected, got %q", clause)
+	}
+	if len(params) != 3 {
+		t.Errorf("expected 3 params, got %+v", params)
 	}
 }
 
-func TestEscapeSQLString(t *testing.T) {
-	got := escapeSQLString("O'Brien")
-	want := "O\\'Brien"
-	if got != want {
-		t.Errorf("escapeSQLString = %q, want %q", got, want)
+func TestQueryFiltersNotInterpolated(t *testing.T) {
+	// Filter values with SQL metacharacters must travel as query parameters,
+	// never appear in the SQL text (the old escaping missed backslashes:
+	// a value ending in \ escaped the closing quote).
+	var receivedReq queryRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	hostile := `evil\' OR '1'='1`
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour),
+		QueryFilters{Team: hostile})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(receivedReq.Query, "evil") {
+		t.Errorf("filter value leaked into SQL text: %s", receivedReq.Query)
+	}
+	if receivedReq.ParameterMode != "NAMED" {
+		t.Errorf("parameterMode = %q, want NAMED", receivedReq.ParameterMode)
+	}
+	found := false
+	for _, p := range receivedReq.QueryParameters {
+		if p.Name == "team" && p.ParameterValue.Value == hostile {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("team parameter missing, got %+v", receivedReq.QueryParameters)
+	}
+}
+
+func TestReaderRejectsInvalidIdentifiers(t *testing.T) {
+	// Project/dataset/table are interpolated into the table reference and
+	// must be validated as identifiers.
+	reader := NewReader("proj", "ds`; DROP TABLE x;--", "tbl")
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("expected invalid-identifier error, got %v", err)
+	}
+
+	reader = NewReader("proj", "ds", "tbl")
+	if err := reader.validateIdentifiers(); err != nil {
+		t.Errorf("valid identifiers rejected: %v", err)
+	}
+}
+
+func TestQueryAggregatedCostsSQLShape(t *testing.T) {
+	var receivedSQL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedSQL = req.Query
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// avg $/hr must divide by the covered time (SUM of interval windows),
+	// not MAX-MIN of snapshot timestamps: that has a fencepost error (N
+	// intervals of cost over an N-1 interval span) and yields NULL→0 for
+	// single-snapshot groups.
+	if !strings.Contains(receivedSQL, "SUM(interval_seconds)") {
+		t.Errorf("avg_cost_per_hour should divide by SUM(interval_seconds), got: %s", receivedSQL)
+	}
+	if strings.Contains(receivedSQL, "TIMESTAMP_DIFF(MAX(timestamp), MIN(timestamp)") {
+		t.Errorf("avg_cost_per_hour still uses timestamp-span denominator: %s", receivedSQL)
+	}
+	// Rows written before the cost_mode column existed are autopilot.
+	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
+		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
+	}
+}
+
+func TestQueryTimeSeriesNormalizesCostMode(t *testing.T) {
+	var receivedSQL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedSQL = req.Query
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	_, err := reader.QueryTimeSeries(context.Background(), time.Now().Add(-time.Hour), 300, QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
+		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
+	}
+}
+
+func TestQueryFollowsPagination(t *testing.T) {
+	// Results beyond the first page must be fetched via pageToken, not
+	// silently truncated.
+	makeRow := func(team string, cost string) responseRow {
+		return responseRow{F: []responseCell{
+			{V: "c"}, {V: team}, {V: "w"}, {V: ""}, {V: "ns"}, {V: "autopilot"},
+			{V: "false"}, {V: "1"}, {V: "1"}, {V: "1"},
+			{V: cost}, {V: "1"}, {V: "1"}, {V: "1"}, {V: "0"},
+			{V: nil}, {V: nil}, {V: nil},
+		}}
+	}
+
+	var pageRequests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageRequests = append(pageRequests, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodPost {
+			// First page: one row + a pageToken pointing at the rest.
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete":  true,
+				"totalRows":    "3",
+				"pageToken":    "page2",
+				"jobReference": map[string]string{"projectId": "proj", "jobId": "job123", "location": "US"},
+				"rows":         []responseRow{makeRow("team-a", "1.0")},
+			})
+			return
+		}
+
+		// Paginated GET for subsequent pages.
+		if !strings.Contains(r.URL.Path, "job123") {
+			t.Errorf("expected jobId in path, got %s", r.URL.Path)
+		}
+		switch r.URL.Query().Get("pageToken") {
+		case "page2":
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete": true,
+				"pageToken":   "page3",
+				"rows":        []responseRow{makeRow("team-b", "2.0")},
+			})
+		case "page3":
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete": true,
+				"rows":        []responseRow{makeRow("team-c", "3.0")},
+			})
+		default:
+			t.Errorf("unexpected pageToken %q", r.URL.Query().Get("pageToken"))
+		}
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	rows, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows across pages, got %d (requests: %v)", len(rows), pageRequests)
+	}
+	if rows[0].Team != "team-a" || rows[1].Team != "team-b" || rows[2].Team != "team-c" {
+		t.Errorf("rows out of order or missing: %+v", rows)
 	}
 }

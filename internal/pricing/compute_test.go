@@ -393,9 +393,9 @@ func TestExtractComputePricesRejectsCustomAndSoleTenancy(t *testing.T) {
 		"N2 Custom Instance Core running in Americas",
 		"Spot Preemptible N2 Custom Instance Ram running in Americas",
 		"E2 Custom Instance Core running in Americas",
-		"Custom Instance Core running in Americas",           // bare custom (N1)
-		"Sole Tenancy Instance N2 Core running in Americas",  // sole tenancy
-		"N1 Sole Tenancy Instance Core running in Americas",  // qualifier form
+		"Custom Instance Core running in Americas",          // bare custom (N1)
+		"Sole Tenancy Instance N2 Core running in Americas", // sole tenancy
+		"N1 Sole Tenancy Instance Core running in Americas", // qualifier form
 	}
 
 	for _, desc := range descs {

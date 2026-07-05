@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -51,17 +53,43 @@ func NewReader(project, dataset, table string, opts ...ReaderOption) *Reader {
 
 // queryRequest is the body for POST /projects/{projectId}/queries.
 type queryRequest struct {
-	Query        string `json:"query"`
-	UseLegacySQL bool   `json:"useLegacySql"`
-	MaxResults   int    `json:"maxResults,omitempty"`
+	Query           string           `json:"query"`
+	UseLegacySQL    bool             `json:"useLegacySql"`
+	MaxResults      int              `json:"maxResults,omitempty"`
+	ParameterMode   string           `json:"parameterMode,omitempty"`
+	QueryParameters []queryParameter `json:"queryParameters,omitempty"`
+}
+
+// queryParameter is a named query parameter for BigQuery standard SQL.
+type queryParameter struct {
+	Name           string              `json:"name"`
+	ParameterType  queryParameterType  `json:"parameterType"`
+	ParameterValue queryParameterValue `json:"parameterValue"`
+}
+
+type queryParameterType struct {
+	Type string `json:"type"`
+}
+
+type queryParameterValue struct {
+	Value string `json:"value"`
 }
 
 // queryResponse is the response from the BigQuery query API.
 type queryResponse struct {
-	Schema      responseSchema `json:"schema"`
-	Rows        []responseRow  `json:"rows"`
-	TotalRows   string         `json:"totalRows"`
-	JobComplete bool           `json:"jobComplete"`
+	Schema       responseSchema `json:"schema"`
+	Rows         []responseRow  `json:"rows"`
+	TotalRows    string         `json:"totalRows"`
+	JobComplete  bool           `json:"jobComplete"`
+	PageToken    string         `json:"pageToken"`
+	JobReference jobReference   `json:"jobReference"`
+}
+
+// jobReference identifies the query job for paginated result fetching.
+type jobReference struct {
+	ProjectID string `json:"projectId"`
+	JobID     string `json:"jobId"`
+	Location  string `json:"location"`
 }
 
 type responseSchema struct {
@@ -81,12 +109,23 @@ type responseCell struct {
 	V any `json:"v"`
 }
 
-// query executes a SQL query and returns the raw response.
-func (r *Reader) query(ctx context.Context, sql string) (*queryResponse, error) {
+const queryPageSize = 10000
+
+// query executes a SQL query and returns the raw response with all result
+// pages merged (following pageToken so large results aren't truncated).
+func (r *Reader) query(ctx context.Context, sql string, params []queryParameter) (*queryResponse, error) {
+	if err := r.validateIdentifiers(); err != nil {
+		return nil, err
+	}
+
 	reqBody := queryRequest{
-		Query:        sql,
-		UseLegacySQL: false,
-		MaxResults:   10000,
+		Query:           sql,
+		UseLegacySQL:    false,
+		MaxResults:      queryPageSize,
+		QueryParameters: params,
+	}
+	if len(params) > 0 {
+		reqBody.ParameterMode = "NAMED"
 	}
 	data, err := json.Marshal(reqBody)
 	if err != nil {
@@ -101,6 +140,52 @@ func (r *Reader) query(ctx context.Context, sql string) (*queryResponse, error) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	result, err := r.doQueryRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if !result.JobComplete {
+		return nil, fmt.Errorf("BigQuery query did not complete synchronously; try a shorter time range")
+	}
+
+	// Follow pagination: merge subsequent pages into the first response.
+	for pageToken := result.PageToken; pageToken != ""; {
+		page, err := r.fetchQueryPage(ctx, result.JobReference, pageToken)
+		if err != nil {
+			return nil, err
+		}
+		result.Rows = append(result.Rows, page.Rows...)
+		pageToken = page.PageToken
+	}
+
+	return result, nil
+}
+
+// fetchQueryPage retrieves one additional page of query results.
+func (r *Reader) fetchQueryPage(ctx context.Context, job jobReference, pageToken string) (*queryResponse, error) {
+	u, err := neturl.Parse(fmt.Sprintf("%s/projects/%s/queries/%s", r.baseURL, r.project, job.JobID))
+	if err != nil {
+		return nil, fmt.Errorf("building results URL: %w", err)
+	}
+	q := neturl.Values{
+		"pageToken":  {pageToken},
+		"maxResults": {strconv.Itoa(queryPageSize)},
+	}
+	if job.Location != "" {
+		q.Set("location", job.Location)
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating results request: %w", err)
+	}
+	return r.doQueryRequest(req)
+}
+
+// doQueryRequest sends the request and decodes a queryResponse.
+func (r *Reader) doQueryRequest(req *http.Request) (*queryResponse, error) {
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("sending query request: %w", err)
@@ -116,12 +201,22 @@ func (r *Reader) query(ctx context.Context, sql string) (*queryResponse, error) 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decoding query response: %w", err)
 	}
-
-	if !result.JobComplete {
-		return nil, fmt.Errorf("BigQuery query did not complete synchronously; try a shorter time range")
-	}
-
 	return &result, nil
+}
+
+// identifierRegex matches valid BigQuery project/dataset/table identifiers
+// (projects also allow hyphens).
+var identifierRegex = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// validateIdentifiers rejects project/dataset/table names that cannot be
+// safely interpolated into the table reference.
+func (r *Reader) validateIdentifiers() error {
+	for _, id := range []string{r.project, r.dataset, r.table} {
+		if !identifierRegex.MatchString(id) {
+			return fmt.Errorf("invalid BigQuery identifier %q", id)
+		}
+	}
+	return nil
 }
 
 // tableRef returns the fully-qualified BigQuery table reference.
@@ -129,34 +224,42 @@ func (r *Reader) tableRef() string {
 	return fmt.Sprintf("`%s.%s.%s`", r.project, r.dataset, r.table)
 }
 
-// buildFilterClause returns SQL WHERE conditions for optional filters.
-func buildFilterClause(f QueryFilters) string {
+// buildFilterClause returns SQL WHERE conditions and the named query
+// parameters for optional filters. Values travel as parameters, never
+// interpolated into SQL text.
+func buildFilterClause(f QueryFilters) (string, []queryParameter) {
 	var clauses []string
-	if f.ClusterName != "" {
-		clauses = append(clauses, fmt.Sprintf("AND cluster_name = '%s'", escapeSQLString(f.ClusterName)))
+	var params []queryParameter
+	addFilter := func(column, value string) {
+		if value == "" {
+			return
+		}
+		clauses = append(clauses, fmt.Sprintf("AND %s = @%s", column, column))
+		params = append(params, queryParameter{
+			Name:           column,
+			ParameterType:  queryParameterType{Type: "STRING"},
+			ParameterValue: queryParameterValue{Value: value},
+		})
 	}
-	if f.Namespace != "" {
-		clauses = append(clauses, fmt.Sprintf("AND namespace = '%s'", escapeSQLString(f.Namespace)))
-	}
-	if f.Team != "" {
-		clauses = append(clauses, fmt.Sprintf("AND team = '%s'", escapeSQLString(f.Team)))
-	}
-	return strings.Join(clauses, " ")
-}
-
-// escapeSQLString escapes single quotes in SQL string literals.
-func escapeSQLString(s string) string {
-	return strings.ReplaceAll(s, "'", "\\'")
+	addFilter("cluster_name", f.ClusterName)
+	addFilter("namespace", f.Namespace)
+	addFilter("team", f.Team)
+	return strings.Join(clauses, " "), params
 }
 
 // QueryAggregatedCosts queries BigQuery for aggregated cost data since the given time.
 func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filters QueryFilters) ([]HistoryCostRow, error) {
 	seconds := int64(time.Since(since).Seconds())
-	filterClause := buildFilterClause(filters)
+	filterClause, params := buildFilterClause(filters)
 
+	// avg_cost_per_hour divides by the covered time (sum of the per-row
+	// interval windows) rather than MAX-MIN of timestamps, which has a
+	// fencepost error (N intervals of cost over an N-1 interval span) and is
+	// NULL for single-snapshot groups.
 	sql := fmt.Sprintf(`SELECT
   cluster_name,
-  team, workload, subtype, namespace, cost_mode,
+  team, workload, subtype, namespace,
+  IFNULL(cost_mode, 'autopilot') AS cost_mode,
   LOGICAL_OR(is_spot) AS has_spot,
   AVG(pod_count) AS avg_pods,
   AVG(cpu_request_vcpu) AS avg_cpu_vcpu,
@@ -164,7 +267,7 @@ func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filt
   SUM(total_cost) AS total_cost,
   SUM(cpu_cost) AS total_cpu_cost,
   SUM(memory_cost) AS total_mem_cost,
-  SAFE_DIVIDE(SUM(total_cost), TIMESTAMP_DIFF(MAX(timestamp), MIN(timestamp), SECOND) / 3600.0) AS avg_cost_per_hour,
+  SAFE_DIVIDE(SUM(total_cost), SUM(interval_seconds) / 3600.0) AS avg_cost_per_hour,
   SUM(IFNULL(wasted_cost, 0)) AS total_wasted_cost,
   AVG(cpu_utilization) AS avg_cpu_util,
   AVG(memory_utilization) AS avg_mem_util,
@@ -176,7 +279,7 @@ GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode
 ORDER BY total_cost DESC`,
 		r.tableRef(), seconds, filterClause)
 
-	resp, err := r.query(ctx, sql)
+	resp, err := r.query(ctx, sql, params)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +290,12 @@ ORDER BY total_cost DESC`,
 // QueryTimeSeries queries BigQuery for time-bucketed cost data for sparklines.
 func (r *Reader) QueryTimeSeries(ctx context.Context, since time.Time, bucketSeconds int64, filters QueryFilters) ([]TimeSeriesPoint, error) {
 	seconds := int64(time.Since(since).Seconds())
-	filterClause := buildFilterClause(filters)
+	filterClause, params := buildFilterClause(filters)
 
 	sql := fmt.Sprintf(`SELECT
   cluster_name,
-  team, workload, subtype, namespace, cost_mode,
+  team, workload, subtype, namespace,
+  IFNULL(cost_mode, 'autopilot') AS cost_mode,
   TIMESTAMP_SECONDS(DIV(UNIX_SECONDS(timestamp), %d) * %d) AS bucket,
   SUM(total_cost) AS bucket_cost
 FROM %s
@@ -201,7 +305,7 @@ GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket
 ORDER BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket`,
 		bucketSeconds, bucketSeconds, r.tableRef(), seconds, filterClause)
 
-	resp, err := r.query(ctx, sql)
+	resp, err := r.query(ctx, sql, params)
 	if err != nil {
 		return nil, err
 	}
