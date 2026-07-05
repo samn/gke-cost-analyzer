@@ -148,6 +148,7 @@ type geoTaxonomy struct {
 }
 
 type skuPricingInfo struct {
+	EffectiveTime     string            `json:"effectiveTime"`
 	PricingExpression pricingExpression `json:"pricingExpression"`
 }
 
@@ -221,19 +222,34 @@ func extractAutopilotPrices(sku catalogSKU) []Price {
 
 	var prices []Price
 	for _, region := range regions {
-		for _, pi := range sku.PricingInfo {
-			unitPrice := extractUnitPrice(pi)
-			if unitPrice > 0 {
-				prices = append(prices, Price{
-					Region:       region,
-					ResourceType: matcher.resource,
-					Tier:         matcher.tier,
-					UnitPrice:    unitPrice,
-				})
-			}
+		unitPrice := extractUnitPrice(currentPricingInfo(sku.PricingInfo))
+		if unitPrice > 0 {
+			prices = append(prices, Price{
+				Region:       region,
+				ResourceType: matcher.resource,
+				Tier:         matcher.tier,
+				UnitPrice:    unitPrice,
+			})
 		}
 	}
 	return prices
+}
+
+// currentPricingInfo returns the pricing record with the latest
+// effectiveTime. PricingInfo is a list of timestamped records; picking by
+// slice position could select a stale rate.
+func currentPricingInfo(infos []skuPricingInfo) skuPricingInfo {
+	if len(infos) == 0 {
+		return skuPricingInfo{}
+	}
+	current := infos[0]
+	for _, pi := range infos[1:] {
+		// RFC3339 timestamps compare correctly as strings.
+		if pi.EffectiveTime > current.EffectiveTime {
+			current = pi
+		}
+	}
+	return current
 }
 
 // extractUnitPrice gets the hourly unit price from pricing info.

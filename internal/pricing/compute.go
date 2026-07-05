@@ -170,17 +170,15 @@ func extractComputePrices(sku catalogSKU) []ComputePrice {
 
 	var prices []ComputePrice
 	for _, region := range regions {
-		for _, pi := range sku.PricingInfo {
-			unitPrice := extractUnitPrice(pi)
-			if unitPrice > 0 {
-				prices = append(prices, ComputePrice{
-					Region:        region,
-					MachineFamily: family,
-					ResourceType:  rt,
-					Tier:          tier,
-					UnitPrice:     unitPrice,
-				})
-			}
+		unitPrice := extractUnitPrice(currentPricingInfo(sku.PricingInfo))
+		if unitPrice > 0 {
+			prices = append(prices, ComputePrice{
+				Region:        region,
+				MachineFamily: family,
+				ResourceType:  rt,
+				Tier:          tier,
+				UnitPrice:     unitPrice,
+			})
 		}
 	}
 	return prices

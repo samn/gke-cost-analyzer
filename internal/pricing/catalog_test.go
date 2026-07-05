@@ -386,31 +386,42 @@ func TestExtractAutopilotPricesNonMatchingSKU(t *testing.T) {
 }
 
 func TestExtractAutopilotPricesMultiplePricingInfos(t *testing.T) {
-	// SKU with multiple PricingInfo entries — each should produce a price.
+	// PricingInfo is a list of timestamped pricing records. Only the entry
+	// with the latest effectiveTime is current — emitting one price per
+	// entry let a stale rate win depending on slice order.
 	sku := catalogSKU{
 		Description: "Autopilot Pod mCPU Requests",
 		GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
 		PricingInfo: []skuPricingInfo{
-			{PricingExpression: pricingExpression{
-				TieredRates: []tieredRate{
-					{UnitPrice: unitPrice{Nanos: 35000}},
+			{
+				EffectiveTime: "2025-01-01T00:00:00Z",
+				PricingExpression: pricingExpression{
+					TieredRates: []tieredRate{
+						{UnitPrice: unitPrice{Nanos: 40000}},
+					},
 				},
-			}},
-			{PricingExpression: pricingExpression{
-				TieredRates: []tieredRate{
-					{UnitPrice: unitPrice{Nanos: 40000}},
+			},
+			{
+				// Older record listed last — must NOT win.
+				EffectiveTime: "2024-01-01T00:00:00Z",
+				PricingExpression: pricingExpression{
+					TieredRates: []tieredRate{
+						{UnitPrice: unitPrice{Nanos: 35000}},
+					},
 				},
-			}},
+			},
 		},
 	}
 
 	prices := extractAutopilotPrices(sku)
-	// Each PricingInfo × each region = 2 prices
-	if len(prices) != 2 {
-		t.Fatalf("expected 2 prices (one per PricingInfo), got %d", len(prices))
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price (latest PricingInfo only), got %d", len(prices))
+	}
+	if prices[0].UnitPrice != 40000.0/1e9 {
+		t.Errorf("unit price = %v, want the newest record (40000 nanos)", prices[0].UnitPrice)
 	}
 	if prices[0].ResourceType != CPU || prices[0].Tier != OnDemand {
-		t.Errorf("first price should be CPU/OnDemand, got %s/%s", prices[0].ResourceType, prices[0].Tier)
+		t.Errorf("price should be CPU/OnDemand, got %s/%s", prices[0].ResourceType, prices[0].Tier)
 	}
 }
 
