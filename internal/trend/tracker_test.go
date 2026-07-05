@@ -403,3 +403,78 @@ func TestFirstCall_NoEvents(t *testing.T) {
 		t.Errorf("first call should produce no events, got %d", len(events))
 	}
 }
+
+func TestZeroThreshold_DisablesDetection(t *testing.T) {
+	// Threshold 0 means "disabled" per the flag contract. Without an internal
+	// guard, |z| > 0 fires on nearly every sample.
+	cfg := DefaultConfig()
+	cfg.Threshold = 0
+	tracker := NewTracker(cfg)
+	now := time.Now()
+
+	for i := 0; i < 10; i++ {
+		tracker.Update([]cost.AggregatedCost{
+			makeAgg("platform", "web", 1.0),
+		}, now.Add(time.Duration(i)*10*time.Second))
+	}
+
+	// A 10x spike must not produce aberration events when disabled.
+	events := tracker.Update([]cost.AggregatedCost{
+		makeAgg("platform", "web", 10.0),
+	}, now.Add(200*time.Second))
+	for _, e := range events {
+		if e.Kind == EventAberration {
+			t.Errorf("threshold=0 must disable detection, got %+v", e)
+		}
+	}
+}
+
+func TestDropToNearZero_DetectsAberration(t *testing.T) {
+	// MinCostPerHour exists to ignore noise on tiny workloads, but it must
+	// not mask a large workload crashing to near-zero cost.
+	tracker := NewTracker(DefaultConfig())
+	now := time.Now()
+
+	for i := 0; i < 10; i++ {
+		tracker.Update([]cost.AggregatedCost{
+			makeAgg("platform", "web", 5.0),
+		}, now.Add(time.Duration(i)*10*time.Second))
+	}
+
+	// Crash to below MinCostPerHour (0.001 default).
+	events := tracker.Update([]cost.AggregatedCost{
+		makeAgg("platform", "web", 0.0005),
+	}, now.Add(100*time.Second))
+
+	found := false
+	for _, e := range events {
+		if e.Kind == EventAberration && e.ZScore < 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected aberration for a large workload dropping to near-zero cost")
+	}
+}
+
+func TestTinyWorkloadStaysIgnored(t *testing.T) {
+	// Workloads whose baseline AND current cost are below MinCostPerHour
+	// remain ignored even when their relative change is large.
+	tracker := NewTracker(DefaultConfig())
+	now := time.Now()
+
+	for i := 0; i < 10; i++ {
+		tracker.Update([]cost.AggregatedCost{
+			makeAgg("platform", "tiny", 0.0002),
+		}, now.Add(time.Duration(i)*10*time.Second))
+	}
+
+	events := tracker.Update([]cost.AggregatedCost{
+		makeAgg("platform", "tiny", 0.0008), // 4x, but still noise-level
+	}, now.Add(100*time.Second))
+	for _, e := range events {
+		if e.Kind == EventAberration {
+			t.Errorf("noise-level workload should stay ignored, got %+v", e)
+		}
+	}
+}
