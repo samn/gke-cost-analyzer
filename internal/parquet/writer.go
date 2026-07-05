@@ -92,6 +92,8 @@ func RowToSnapshot(r Row) bigquery.CostSnapshot {
 
 // AppendToFile appends cost snapshots to a Parquet file. If the file already
 // exists its rows are preserved. If it does not exist a new file is created.
+// The rewrite goes through a temp file + rename so a crash mid-write can't
+// destroy previously recorded snapshots.
 func AppendToFile(path string, snapshots []bigquery.CostSnapshot) error {
 	rows, err := readExisting(path)
 	if err != nil {
@@ -102,8 +104,14 @@ func AppendToFile(path string, snapshots []bigquery.CostSnapshot) error {
 		rows = append(rows, SnapshotToRow(s))
 	}
 
-	if err := parquet.WriteFile(path, rows); err != nil {
+	tmp := path + ".tmp"
+	if err := parquet.WriteFile(tmp, rows); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writing parquet file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("replacing parquet file: %w", err)
 	}
 	return nil
 }

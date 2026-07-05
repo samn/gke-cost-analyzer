@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 	"time"
 
@@ -442,4 +443,63 @@ func TestAppendToFileCorruptFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for corrupt file")
 	}
+}
+
+func TestAppendToFileIsAtomic(t *testing.T) {
+	// AppendToFile must replace the file via a temp-file + rename, never
+	// truncate it in place: an in-place rewrite that crashes mid-write
+	// destroys every previously recorded snapshot. Rename produces a new
+	// inode; in-place truncation keeps the old one.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "atomic.parquet")
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	if err := AppendToFile(path, []bigquery.CostSnapshot{testSnapshot(ts, "a", "w", 1)}); err != nil {
+		t.Fatal(err)
+	}
+
+	inodeBefore := fileInode(t, path)
+
+	if err := AppendToFile(path, []bigquery.CostSnapshot{testSnapshot(ts.Add(time.Minute), "b", "w", 2)}); err != nil {
+		t.Fatal(err)
+	}
+
+	if inodeAfter := fileInode(t, path); inodeAfter == inodeBefore {
+		t.Error("append rewrote the file in place (same inode); expected temp-file + rename")
+	}
+
+	// No temp remnants left behind.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("expected only the parquet file in dir, got %v", names)
+	}
+
+	// Content intact across both appends.
+	got, err := ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 rows, got %d", len(got))
+	}
+}
+
+func fileInode(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("inode not available on this platform")
+	}
+	return st.Ino
 }
