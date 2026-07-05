@@ -22,7 +22,11 @@ func run() int {
 	defer appSentry.RecoverAndCapture()
 
 	if err := cmd.Execute(); err != nil {
-		appSentry.CaptureError(err)
+		// Operator input mistakes (missing flags, bad arguments) are not
+		// application errors — don't report them to Sentry.
+		if !cmd.IsUsageError(err) {
+			appSentry.CaptureError(err)
+		}
 		return 1
 	}
 	return 0

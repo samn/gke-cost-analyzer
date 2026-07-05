@@ -34,10 +34,10 @@ var watchCmd = &cobra.Command{
 
 func runWatch(cmd *cobra.Command, _ []string) error {
 	if region == "" {
-		return fmt.Errorf("--region is required")
+		return usageErrorf("--region is required")
 	}
 	if watchInterval <= 0 {
-		return fmt.Errorf("--interval must be positive")
+		return usageErrorf("--interval must be positive")
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)

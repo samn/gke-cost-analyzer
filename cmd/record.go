@@ -45,19 +45,19 @@ var recordCmd = &cobra.Command{
 
 func runRecord(cmd *cobra.Command, _ []string) error {
 	if region == "" {
-		return fmt.Errorf("--region is required")
+		return usageErrorf("--region is required")
 	}
 	if project == "" {
-		return fmt.Errorf("--project is required")
+		return usageErrorf("--project is required")
 	}
 	if clusterName == "" {
-		return fmt.Errorf("--cluster-name is required")
+		return usageErrorf("--cluster-name is required")
 	}
 	if recordInterval <= 0 {
-		return fmt.Errorf("--interval must be positive")
+		return usageErrorf("--interval must be positive")
 	}
 	if outputFile != "" && !dryRun {
-		return fmt.Errorf("--output-file requires --dry-run")
+		return usageErrorf("--output-file requires --dry-run")
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)

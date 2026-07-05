@@ -29,7 +29,7 @@ var setupCmd = &cobra.Command{
 
 func runSetup(cmd *cobra.Command, _ []string) error {
 	if project == "" {
-		return fmt.Errorf("--project is required")
+		return usageErrorf("--project is required")
 	}
 
 	ctx := cmd.Context()

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +20,22 @@ import (
 // shutdownSignals are the signals that trigger graceful shutdown. SIGTERM is
 // what Kubernetes (and Docker) send on pod termination; SIGINT covers Ctrl-C.
 var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+// usageError marks operator input mistakes (missing/invalid flags or
+// arguments) so main() can skip reporting them to Sentry.
+type usageError struct{ error }
+
+// usageErrorf builds a usage-classified error.
+func usageErrorf(format string, args ...any) error {
+	return usageError{fmt.Errorf(format, args...)}
+}
+
+// IsUsageError reports whether err is an operator input mistake rather than
+// an application failure.
+func IsUsageError(err error) bool {
+	var ue usageError
+	return errors.As(err, &ue)
+}
 
 // gcpHTTPTimeout bounds each GCP API request so a hung backend cannot wedge
 // a daemon loop indefinitely.

@@ -41,11 +41,11 @@ var historyCmd = &cobra.Command{
 
 func runHistory(cmd *cobra.Command, args []string) error {
 	if project == "" {
-		return fmt.Errorf("--project is required for the history command")
+		return usageErrorf("--project is required for the history command")
 	}
 
 	if historyAllClusters && historyCluster != "" {
-		return fmt.Errorf("cannot use --all-clusters with --cluster-name")
+		return usageErrorf("cannot use --all-clusters with --cluster-name")
 	}
 
 	duration, err := parseHistoryDuration(args[0])
@@ -119,13 +119,13 @@ const maxHistoryDuration = 5 * 365 * 24 * time.Hour
 // Supports h (hours), d (days), w (weeks).
 func parseHistoryDuration(s string) (time.Duration, error) {
 	if len(s) < 2 {
-		return 0, fmt.Errorf("invalid duration %q: use format like 3h, 3d, or 1w", s)
+		return 0, usageErrorf("invalid duration %q: use format like 3h, 3d, or 1w", s)
 	}
 	numStr := s[:len(s)-1]
 	unit := s[len(s)-1]
 	num, err := strconv.Atoi(numStr)
 	if err != nil || num <= 0 {
-		return 0, fmt.Errorf("invalid duration %q: number must be a positive integer", s)
+		return 0, usageErrorf("invalid duration %q: number must be a positive integer", s)
 	}
 	var hoursPerUnit int
 	switch unit {
@@ -136,11 +136,11 @@ func parseHistoryDuration(s string) (time.Duration, error) {
 	case 'w':
 		hoursPerUnit = 7 * 24
 	default:
-		return 0, fmt.Errorf("invalid duration unit %q in %q: use h (hours), d (days), or w (weeks)", string(unit), s)
+		return 0, usageErrorf("invalid duration unit %q in %q: use h (hours), d (days), or w (weeks)", string(unit), s)
 	}
 	// Check before multiplying so huge values can't overflow int64 nanoseconds.
 	if num > int(maxHistoryDuration/time.Hour)/hoursPerUnit {
-		return 0, fmt.Errorf("invalid duration %q: maximum is 5 years", s)
+		return 0, usageErrorf("invalid duration %q: maximum is 5 years", s)
 	}
 	return time.Duration(num) * time.Duration(hoursPerUnit) * time.Hour, nil
 }

@@ -101,11 +101,15 @@ func validateMode() error {
 	case "autopilot", "standard", "all":
 		return nil
 	default:
-		return fmt.Errorf("--mode must be one of: autopilot, standard, all (got %q)", mode)
+		return usageErrorf("--mode must be one of: autopilot, standard, all (got %q)", mode)
 	}
 }
 
 // Execute runs the root command.
 func Execute() error {
+	// Flag-parse failures are operator input mistakes, not application errors.
+	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return usageError{err}
+	})
 	return rootCmd.Execute()
 }
