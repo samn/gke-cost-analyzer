@@ -254,21 +254,26 @@ func TestQueryTimeSeries(t *testing.T) {
 		if !strings.Contains(req.Query, "DIV(UNIX_SECONDS(timestamp), 3600)") {
 			t.Errorf("SQL should contain bucket expression, got: %s", req.Query)
 		}
+		// Namespace is part of the workload identity, so the time-series
+		// query must group by it (matching the aggregated query).
+		if !strings.Contains(req.Query, "GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket") {
+			t.Errorf("SQL should group by namespace, got: %s", req.Query)
+		}
 
 		resp := queryResponse{
 			JobComplete: true,
 			TotalRows:   "3",
 			Rows: []responseRow{
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050464e+09"}, {V: "0.50"},
 				}},
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050500e+09"}, {V: "0.75"},
 				}},
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050536e+09"}, {V: "1.00"},
 				}},
 			},
@@ -293,6 +298,9 @@ func TestQueryTimeSeries(t *testing.T) {
 	}
 	if points[0].Key.Team != "platform" || points[0].Key.Workload != "web" {
 		t.Errorf("unexpected key: %+v", points[0].Key)
+	}
+	if points[0].Key.Namespace != "default" {
+		t.Errorf("namespace = %s, want default", points[0].Key.Namespace)
 	}
 	if points[0].BucketCost != 0.50 {
 		t.Errorf("bucket_cost = %f, want 0.50", points[0].BucketCost)

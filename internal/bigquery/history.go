@@ -30,6 +30,7 @@ type WorkloadKey struct {
 	Team        string
 	Workload    string
 	Subtype     string
+	Namespace   string
 	CostMode    string
 }
 
@@ -40,6 +41,7 @@ func KeyFromRow(r HistoryCostRow) WorkloadKey {
 		Team:        r.Team,
 		Workload:    r.Workload,
 		Subtype:     r.Subtype,
+		Namespace:   r.Namespace,
 		CostMode:    r.CostMode,
 	}
 }

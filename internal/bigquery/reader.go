@@ -191,14 +191,14 @@ func (r *Reader) QueryTimeSeries(ctx context.Context, since time.Time, bucketSec
 
 	sql := fmt.Sprintf(`SELECT
   cluster_name,
-  team, workload, subtype, cost_mode,
+  team, workload, subtype, namespace, cost_mode,
   TIMESTAMP_SECONDS(DIV(UNIX_SECONDS(timestamp), %d) * %d) AS bucket,
   SUM(total_cost) AS bucket_cost
 FROM %s
 WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
   %s
-GROUP BY cluster_name, team, workload, subtype, cost_mode, bucket
-ORDER BY cluster_name, team, workload, subtype, cost_mode, bucket`,
+GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket
+ORDER BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket`,
 		bucketSeconds, bucketSeconds, r.tableRef(), seconds, filterClause)
 
 	resp, err := r.query(ctx, sql)
@@ -248,8 +248,8 @@ func parseAggregatedRows(resp *queryResponse) ([]HistoryCostRow, error) {
 func parseTimeSeriesRows(resp *queryResponse) ([]TimeSeriesPoint, error) {
 	var points []TimeSeriesPoint
 	for i, row := range resp.Rows {
-		if len(row.F) < 7 {
-			return nil, fmt.Errorf("row %d: expected 7 columns, got %d", i, len(row.F))
+		if len(row.F) < 8 {
+			return nil, fmt.Errorf("row %d: expected 8 columns, got %d", i, len(row.F))
 		}
 
 		p := TimeSeriesPoint{
@@ -258,17 +258,18 @@ func parseTimeSeriesRows(resp *queryResponse) ([]TimeSeriesPoint, error) {
 				Team:        cellString(row.F[1]),
 				Workload:    cellString(row.F[2]),
 				Subtype:     cellString(row.F[3]),
-				CostMode:    cellString(row.F[4]),
+				Namespace:   cellString(row.F[4]),
+				CostMode:    cellString(row.F[5]),
 			},
 		}
 
 		// BigQuery returns TIMESTAMP as epoch seconds (as a string float).
-		bucketStr := cellString(row.F[5])
+		bucketStr := cellString(row.F[6])
 		if bucketSec, err := strconv.ParseFloat(bucketStr, 64); err == nil {
 			p.Bucket = time.Unix(int64(bucketSec), 0).UTC()
 		}
 
-		p.BucketCost = cellFloat(row.F[6])
+		p.BucketCost = cellFloat(row.F[7])
 		points = append(points, p)
 	}
 	return points, nil

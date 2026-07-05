@@ -11,11 +11,17 @@ func TestKeyFromRow(t *testing.T) {
 		Team:        "platform",
 		Workload:    "web",
 		Subtype:     "api",
+		Namespace:   "default",
 		CostMode:    "autopilot",
 	}
 	key := KeyFromRow(row)
 	if key.ClusterName != "prod-cluster" || key.Team != "platform" || key.Workload != "web" || key.Subtype != "api" || key.CostMode != "autopilot" {
 		t.Errorf("KeyFromRow mismatch: %+v", key)
+	}
+	// Namespace is part of the workload identity so that aggregated rows and
+	// sparkline time-series join on the same key.
+	if key.Namespace != "default" {
+		t.Errorf("KeyFromRow namespace = %q, want default", key.Namespace)
 	}
 }
 

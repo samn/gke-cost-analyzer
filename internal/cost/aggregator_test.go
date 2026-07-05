@@ -316,9 +316,9 @@ func TestAggregateEmptySlice(t *testing.T) {
 	}
 }
 
-func TestAggregateNamespaceFromFirstPod(t *testing.T) {
-	// When pods from different namespaces share the same labels,
-	// the aggregated group takes the namespace from the first pod seen.
+func TestAggregateNamespaceSeparatesGroups(t *testing.T) {
+	// Namespace is part of the group identity: pods from different namespaces
+	// with identical labels must aggregate into separate, deterministic groups.
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-1 * time.Hour)
 
@@ -326,6 +326,7 @@ func TestAggregateNamespaceFromFirstPod(t *testing.T) {
 	pods := []kube.PodInfo{
 		kube.NewTestPodInfo("web-1", "ns-a", 500, 512, startTime, false, labels),
 		kube.NewTestPodInfo("web-2", "ns-b", 500, 512, startTime, false, labels),
+		kube.NewTestPodInfo("web-3", "ns-b", 500, 512, startTime, false, labels),
 	}
 
 	pt := pricing.FromPrices([]pricing.Price{
@@ -339,16 +340,22 @@ func TestAggregateNamespaceFromFirstPod(t *testing.T) {
 	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	aggs := Aggregate(costs, lc)
 
-	if len(aggs) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(aggs))
+	if len(aggs) != 2 {
+		t.Fatalf("expected 2 groups (one per namespace), got %d", len(aggs))
 	}
 
-	// Namespace comes from the first pod seen (ns-a)
-	if aggs[0].Namespace != "ns-a" {
-		t.Errorf("namespace = %s, want ns-a (from first pod)", aggs[0].Namespace)
+	counts := map[string]int{}
+	for _, a := range aggs {
+		if a.Namespace != a.Key.Namespace {
+			t.Errorf("Namespace field %q != Key.Namespace %q", a.Namespace, a.Key.Namespace)
+		}
+		counts[a.Key.Namespace] = a.PodCount
 	}
-	if aggs[0].PodCount != 2 {
-		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	if counts["ns-a"] != 1 {
+		t.Errorf("ns-a pod count = %d, want 1", counts["ns-a"])
+	}
+	if counts["ns-b"] != 2 {
+		t.Errorf("ns-b pod count = %d, want 2", counts["ns-b"])
 	}
 }
 
