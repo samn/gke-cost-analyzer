@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -73,13 +74,25 @@ func NewDetector(opts ...Option) *Detector {
 func (d *Detector) Detect() Defaults {
 	var defaults Defaults
 
-	// Strategy 1: GCE metadata server
-	defaults.ProjectID = d.fetchMetadata("/computeMetadata/v1/project/project-id")
-	defaults.ClusterName = d.fetchMetadata("/computeMetadata/v1/instance/attributes/cluster-name")
-	if raw := d.fetchMetadata("/computeMetadata/v1/instance/zone"); raw != "" {
-		zone := parseMetadataZone(raw)
-		defaults.Region = zoneToRegion(zone)
-	}
+	// Strategy 1: GCE metadata server. The three lookups run concurrently so
+	// an unreachable metadata server costs one client timeout, not three.
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		defaults.ProjectID = d.fetchMetadata("/computeMetadata/v1/project/project-id")
+	}()
+	go func() {
+		defer wg.Done()
+		defaults.ClusterName = d.fetchMetadata("/computeMetadata/v1/instance/attributes/cluster-name")
+	}()
+	go func() {
+		defer wg.Done()
+		if raw := d.fetchMetadata("/computeMetadata/v1/instance/zone"); raw != "" {
+			defaults.Region = zoneToRegion(parseMetadataZone(raw))
+		}
+	}()
+	wg.Wait()
 
 	// Strategy 2: fill gaps from kubeconfig context
 	ctxName := d.currentContext()

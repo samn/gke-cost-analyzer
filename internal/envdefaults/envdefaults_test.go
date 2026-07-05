@@ -345,3 +345,15 @@ func TestParseMetadataZone(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGKEContextZonalCluster(t *testing.T) {
+	// Zonal cluster contexts carry a zone, not a region; pricing lookups
+	// need the region, so the zone suffix must be stripped.
+	got, ok := parseGKEContext("gke_my-project_us-central1-a_my-cluster")
+	if !ok {
+		t.Fatal("expected zonal context to parse")
+	}
+	if got.Region != "us-central1" {
+		t.Errorf("region = %q, want us-central1 (zone converted)", got.Region)
+	}
+}

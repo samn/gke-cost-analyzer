@@ -187,3 +187,62 @@ func TestRecordPassesValidationWithInferredDefaults(t *testing.T) {
 		t.Errorf("clusterName = %q, want inferred-cluster", clusterName)
 	}
 }
+
+func TestApplyDefaultsSkipsDetectionWhenAllValuesSet(t *testing.T) {
+	saved := region
+	savedProject := project
+	savedCluster := clusterName
+	defer func() {
+		region = saved
+		project = savedProject
+		clusterName = savedCluster
+	}()
+
+	region = "europe-west1"
+	project = "explicit-project"
+	clusterName = "explicit-cluster"
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	d := envdefaults.NewDetector(
+		envdefaults.WithMetadataBaseURL(srv.URL),
+		envdefaults.WithKubeContext(""),
+	)
+
+	applyDefaults(d, rootCmd)
+
+	// Nothing needs detecting: no metadata calls (which cost up to 3s of
+	// timeouts off-GCP) should be made.
+	if hits != 0 {
+		t.Errorf("detection ran %d metadata requests despite all values being set", hits)
+	}
+}
+
+func TestVersionCommandSkipsDetection(t *testing.T) {
+	savedDetector := newDetector
+	defer func() { newDetector = savedDetector }()
+
+	called := false
+	newDetector = func() *envdefaults.Detector {
+		called = true
+		return envdefaults.NewDetector(
+			envdefaults.WithMetadataBaseURL("http://192.0.2.1:1"),
+			envdefaults.WithKubeContext(""),
+		)
+	}
+
+	rootCmd.SetArgs([]string{"version"})
+	defer rootCmd.SetArgs(nil)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("version failed: %v", err)
+	}
+
+	if called {
+		t.Error("version must not run environment detection (it needs no cluster/project)")
+	}
+}
