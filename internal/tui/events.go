@@ -17,12 +17,6 @@ var (
 	eventLifeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // yellow
 )
 
-// RenderEventLog renders the event log panel. Shows the most recent maxLines
-// events, most recent at the bottom.
-func RenderEventLog(events []trend.Event, now time.Time, maxLines int) string {
-	return RenderEventLogScrolled(events, now, maxLines, 0)
-}
-
 // RenderEventLogScrolled renders the event log panel with a scrollback
 // offset: 0 shows the most recent events, offset N shifts the window N
 // events into the past (clamped to the available history).

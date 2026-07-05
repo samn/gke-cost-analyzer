@@ -25,7 +25,7 @@ func makeEvent(kind trend.EventKind, team, workload string, pctChange float64, a
 }
 
 func TestRenderEventLog_Empty(t *testing.T) {
-	got := RenderEventLog(nil, time.Now(), 5)
+	got := RenderEventLogScrolled(nil, time.Now(), 5, 0)
 	if !strings.Contains(got, "waiting for data") {
 		t.Errorf("empty log should show waiting message, got: %s", got)
 	}
@@ -37,7 +37,7 @@ func TestRenderEventLog_ShowsEvents(t *testing.T) {
 		makeEvent(trend.EventAppeared, "platform", "web", 0, 2*time.Minute),
 		makeEvent(trend.EventAberration, "platform", "web", 45, 30*time.Second),
 	}
-	got := RenderEventLog(events, now, 5)
+	got := RenderEventLogScrolled(events, now, 5, 0)
 	if !strings.Contains(got, "Events") {
 		t.Errorf("should show header, got: %s", got)
 	}
@@ -56,7 +56,7 @@ func TestRenderEventLog_MaxLines(t *testing.T) {
 		))
 	}
 
-	got := RenderEventLog(events, now, 5)
+	got := RenderEventLogScrolled(events, now, 5, 0)
 	// Should have header + 5 event lines = 6 lines total.
 	lines := strings.Split(got, "\n")
 	if len(lines) != 6 {
@@ -71,7 +71,7 @@ func TestRenderEventLog_ShowsMostRecent(t *testing.T) {
 		makeEvent(trend.EventAberration, "team", "new", 20, 5*time.Second),
 	}
 
-	got := RenderEventLog(events, now, 1)
+	got := RenderEventLogScrolled(events, now, 1, 0)
 	// With maxLines=1, should show only the most recent event.
 	if !strings.Contains(got, "team/new") {
 		t.Errorf("should show most recent event, got: %s", got)

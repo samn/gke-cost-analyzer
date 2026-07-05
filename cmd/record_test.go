@@ -30,12 +30,12 @@ func TestAggregatedToSnapshot(t *testing.T) {
 	// The snapshot should store cost for the interval window (300s = 5min = 1/12 hour).
 	agg := cost.AggregatedCost{
 		Key: cost.GroupKey{
-			Team:     "platform",
-			Workload: "web",
-			Subtype:  "api",
-			IsSpot:   false,
+			Namespace: "default",
+			Team:      "platform",
+			Workload:  "web",
+			Subtype:   "api",
+			IsSpot:    false,
 		},
-		Namespace:      "default",
 		PodCount:       3,
 		TotalCPUVCPU:   1.5,
 		TotalMemGB:     3.0,
@@ -220,11 +220,11 @@ func TestAggregatedToSnapshotSpot(t *testing.T) {
 
 	agg := cost.AggregatedCost{
 		Key: cost.GroupKey{
-			Team:     "ml",
-			Workload: "training",
-			IsSpot:   true,
+			Namespace: "ml-ns",
+			Team:      "ml",
+			Workload:  "training",
+			IsSpot:    true,
 		},
-		Namespace:   "ml-ns",
 		PodCount:    10,
 		CostPerHour: 9.0,
 	}
@@ -1024,5 +1024,30 @@ func TestSnapshotIntervalSecs(t *testing.T) {
 	// Clock weirdness (now before last) falls back to nominal.
 	if got := snapshotIntervalSecs(now.Add(time.Minute), now, nominal); got != 300 {
 		t.Errorf("negative elapsed should fall back to nominal, got %d", got)
+	}
+}
+
+func TestSnapshotTimeout(t *testing.T) {
+	// A short --interval must not starve legitimate snapshots: the timeout
+	// gets a floor so a snapshot that takes longer than a small interval can
+	// still complete (otherwise lastSnapshot never advances and the daemon
+	// records nothing forever).
+	if got := snapshotTimeout(15 * time.Second); got != 2*time.Minute {
+		t.Errorf("snapshotTimeout(15s) = %v, want the 2m floor", got)
+	}
+	if got := snapshotTimeout(5 * time.Minute); got != 5*time.Minute {
+		t.Errorf("snapshotTimeout(5m) = %v, want 5m", got)
+	}
+}
+
+func TestRefreshPricesNilCalculators(t *testing.T) {
+	// With no active calculators the refresh is a no-op (no cache or catalog
+	// access) and returns the inputs unchanged.
+	ap, std, err := refreshPrices(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ap != nil || std != nil {
+		t.Errorf("expected nil calculators back, got %v / %v", ap, std)
 	}
 }

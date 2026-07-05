@@ -131,3 +131,15 @@ func TestParseHistoryDurationRejectsOverflow(t *testing.T) {
 		t.Errorf("one year of weeks should be accepted, got %v", err)
 	}
 }
+
+func TestHistoryArgsErrorsAreUsageErrors(t *testing.T) {
+	// A missing duration argument is an operator mistake, not an application
+	// error to report to Sentry.
+	err := historyCmd.Args(historyCmd, []string{})
+	if err == nil {
+		t.Fatal("expected error for missing duration argument")
+	}
+	if !IsUsageError(err) {
+		t.Errorf("missing argument should classify as a usage error, got %T", err)
+	}
+}

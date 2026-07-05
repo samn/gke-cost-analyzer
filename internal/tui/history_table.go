@@ -80,6 +80,9 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, vis ColumnVisibility, s
 				dr.TeamName,
 				fmt.Sprintf("%d workloads %s", dr.WorkloadCount, arrow),
 			)
+			if vis.Namespace {
+				row = append(row, "") // namespace: mixed at team level
+			}
 			if vis.Subtype {
 				row = append(row, "")
 			}
@@ -135,6 +138,9 @@ func RenderHistoryTable(displayRows []HistoryDisplayRow, vis ColumnVisibility, s
 		totalRow = append(totalRow, "")
 	}
 	totalRow = append(totalRow, "TOTAL", "")
+	if vis.Namespace {
+		totalRow = append(totalRow, "")
+	}
 	if vis.Subtype {
 		totalRow = append(totalRow, "")
 	}
@@ -217,6 +223,9 @@ func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, vis Colu
 		teamCol,
 		orDefault(r.Workload, "-"),
 	)
+	if vis.Namespace {
+		row = append(row, orDefault(r.Namespace, "-"))
+	}
 	if vis.Subtype {
 		row = append(row, orDefault(r.Subtype, "-"))
 	}

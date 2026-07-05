@@ -53,6 +53,7 @@ type Model struct {
 	showSubtype     bool
 	showUtilization bool
 	showMode        bool // show MODE column (when in "all" mode)
+	showNamespace   bool // show NAMESPACE column (when rows span >1 namespace)
 
 	// Team drill-down state.
 	grouped       bool            // true = team-grouped view, false = flat workload view
@@ -122,6 +123,32 @@ func (m Model) Init() tea.Cmd {
 	return m.fetchCosts
 }
 
+// vis returns the current column visibility settings.
+func (m Model) vis() ColumnVisibility {
+	return ColumnVisibility{
+		Namespace:   m.showNamespace,
+		Subtype:     m.showSubtype,
+		Mode:        m.showMode,
+		Utilization: m.showUtilization,
+	}
+}
+
+// spansMultipleNamespaces reports whether the aggregated rows cover more than
+// one namespace — namespace is part of the group identity, so without a
+// NAMESPACE column such rows would be indistinguishable duplicates.
+func spansMultipleNamespaces(aggs []cost.AggregatedCost) bool {
+	if len(aggs) == 0 {
+		return false
+	}
+	first := aggs[0].Key.Namespace
+	for _, a := range aggs[1:] {
+		if a.Key.Namespace != first {
+			return true
+		}
+	}
+	return false
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -130,17 +157,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=":
-			key := rune(msg.String()[0])
-			if col, ok := ColumnForKey(key, m.showSubtype, m.showUtilization, m.showMode); ok {
-				if col == m.sortCfg.Column {
-					m.sortCfg.Asc = !m.sortCfg.Asc
-				} else {
-					m.sortCfg = SortConfig{Column: col, Asc: true}
-				}
-				m.rebuildDisplay()
-			}
-			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -185,6 +201,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.eventScroll--
 			}
 			return m, nil
+		default:
+			// Sort keys are dispatched through the shared sortKeys sequence
+			// so adding a column/key cannot silently miss the handler.
+			if k := msg.String(); len(k) == 1 {
+				if col, ok := ColumnForKey(rune(k[0]), m.vis()); ok {
+					if col == m.sortCfg.Column {
+						m.sortCfg.Asc = !m.sortCfg.Asc
+					} else {
+						m.sortCfg = SortConfig{Column: col, Asc: true}
+					}
+					m.rebuildDisplay()
+				}
+			}
+			return m, nil
 		}
 
 	case costDataMsg:
@@ -194,6 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.promErr = msg.promErr
 		m.utilPodCount = msg.utilPodCount
 		m.lastUpdate = time.Now()
+		m.showNamespace = spansMultipleNamespaces(m.aggs)
 		if m.tracker != nil {
 			m.tracker.Update(m.aggs, m.lastUpdate)
 		}
@@ -320,7 +351,7 @@ func (m Model) View() tea.View {
 	}
 
 	help := m.helpText()
-	result := header + "\n\n" + RenderTable(m.displayRows, m.showSubtype, m.showUtilization, m.showMode, m.sortCfg, m.cursor, aberrations) + "\n\n" + help + "\n"
+	result := header + "\n\n" + RenderTable(m.displayRows, m.vis(), m.sortCfg, m.cursor, aberrations) + "\n\n" + help + "\n"
 
 	if m.showEvents && m.tracker != nil {
 		result += "\n" + RenderEventLogScrolled(m.tracker.Events(), time.Now(), eventLogMaxLines, m.eventScroll)
@@ -369,24 +400,15 @@ func (m Model) fetchCosts() tea.Msg {
 
 // helpText returns the footer help line showing sort key mappings.
 func (m Model) helpText() string {
-	vis := ColumnVisibility{Subtype: m.showSubtype, Mode: m.showMode, Utilization: m.showUtilization}
-	defs := visibleColumns(vis)
+	defs := visibleColumns(m.vis())
 
-	help := "Sort:"
-	keyIdx := 0
+	var names []string
 	for _, d := range defs {
-		if !d.sortable {
-			continue
+		if d.sortable {
+			names = append(names, orDefault(d.helpName, d.header))
 		}
-		name := d.helpName
-		if name == "" {
-			name = d.header
-		}
-		if key, ok := sortKeyForIndex(keyIdx); ok {
-			help += fmt.Sprintf(" %c=%s", key, name)
-		}
-		keyIdx++
 	}
+	help := sortKeyHelp(names)
 	help += " · ↑↓=Navigate"
 	if m.grouped {
 		help += " Enter=Expand/Collapse a=Toggle All"

@@ -252,15 +252,42 @@ func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filt
 	seconds := int64(time.Since(since).Seconds())
 	filterClause, params := buildFilterClause(filters)
 
-	// avg_cost_per_hour divides by the covered time (sum of the per-row
+	// Two-level aggregation. Record writes one row per is_spot value per
+	// snapshot, so rows must first collapse per snapshot timestamp: summing
+	// interval_seconds across sibling rows would double-count the covered
+	// time (halving avg $/hr) and AVG over raw rows would understate pod and
+	// request averages. The outer level then aggregates across snapshots;
+	// avg_cost_per_hour divides by the covered time (sum of per-snapshot
 	// interval windows) rather than MAX-MIN of timestamps, which has a
-	// fencepost error (N intervals of cost over an N-1 interval span) and is
-	// NULL for single-snapshot groups.
-	sql := fmt.Sprintf(`SELECT
+	// fencepost error and is NULL for single-snapshot groups. cost_mode is
+	// grouped via the IFNULL expression (never the bare column, which would
+	// keep legacy NULL rows in a separate group).
+	sql := fmt.Sprintf(`WITH per_snapshot AS (
+  SELECT
+    cluster_name, team, workload, subtype, namespace,
+    IFNULL(cost_mode, 'autopilot') AS cost_mode,
+    timestamp,
+    ANY_VALUE(interval_seconds) AS interval_seconds,
+    LOGICAL_OR(is_spot) AS has_spot,
+    SUM(pod_count) AS pod_count,
+    SUM(cpu_request_vcpu) AS cpu_request_vcpu,
+    SUM(memory_request_gb) AS memory_request_gb,
+    SUM(total_cost) AS total_cost,
+    SUM(cpu_cost) AS cpu_cost,
+    SUM(memory_cost) AS memory_cost,
+    SUM(IFNULL(wasted_cost, 0)) AS wasted_cost,
+    AVG(cpu_utilization) AS cpu_utilization,
+    AVG(memory_utilization) AS memory_utilization,
+    AVG(efficiency_score) AS efficiency_score
+  FROM %s
+  WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
+    %s
+  GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), timestamp
+)
+SELECT
   cluster_name,
-  team, workload, subtype, namespace,
-  IFNULL(cost_mode, 'autopilot') AS cost_mode,
-  LOGICAL_OR(is_spot) AS has_spot,
+  team, workload, subtype, namespace, cost_mode,
+  LOGICAL_OR(has_spot) AS has_spot,
   AVG(pod_count) AS avg_pods,
   AVG(cpu_request_vcpu) AS avg_cpu_vcpu,
   AVG(memory_request_gb) AS avg_memory_gb,
@@ -268,13 +295,11 @@ func (r *Reader) QueryAggregatedCosts(ctx context.Context, since time.Time, filt
   SUM(cpu_cost) AS total_cpu_cost,
   SUM(memory_cost) AS total_mem_cost,
   SAFE_DIVIDE(SUM(total_cost), SUM(interval_seconds) / 3600.0) AS avg_cost_per_hour,
-  SUM(IFNULL(wasted_cost, 0)) AS total_wasted_cost,
+  SUM(wasted_cost) AS total_wasted_cost,
   AVG(cpu_utilization) AS avg_cpu_util,
   AVG(memory_utilization) AS avg_mem_util,
   AVG(efficiency_score) AS avg_efficiency
-FROM %s
-WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
-  %s
+FROM per_snapshot
 GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode
 ORDER BY total_cost DESC`,
 		r.tableRef(), seconds, filterClause)
@@ -301,7 +326,7 @@ func (r *Reader) QueryTimeSeries(ctx context.Context, since time.Time, bucketSec
 FROM %s
 WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL %d SECOND)
   %s
-GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket
+GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), bucket
 ORDER BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket`,
 		bucketSeconds, bucketSeconds, r.tableRef(), seconds, filterClause)
 

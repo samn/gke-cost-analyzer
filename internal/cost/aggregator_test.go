@@ -346,9 +346,6 @@ func TestAggregateNamespaceSeparatesGroups(t *testing.T) {
 
 	counts := map[string]int{}
 	for _, a := range aggs {
-		if a.Namespace != a.Key.Namespace {
-			t.Errorf("Namespace field %q != Key.Namespace %q", a.Namespace, a.Key.Namespace)
-		}
 		counts[a.Key.Namespace] = a.PodCount
 	}
 	if counts["ns-a"] != 1 {

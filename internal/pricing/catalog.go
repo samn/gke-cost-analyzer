@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -71,6 +72,9 @@ func NewCatalogClient(opts ...CatalogOption) (*CatalogClient, error) {
 		}
 		cc.httpClient = &http.Client{
 			Transport: &tokenTransport{base: http.DefaultTransport, tokenSource: ts},
+			// Bound each catalog page request so a degraded billing API
+			// can't hang callers (especially the record daemon's refresh).
+			Timeout: 60 * time.Second,
 		}
 	}
 	return cc, nil
@@ -237,19 +241,32 @@ func extractAutopilotPrices(sku catalogSKU) []Price {
 
 // currentPricingInfo returns the pricing record with the latest
 // effectiveTime. PricingInfo is a list of timestamped records; picking by
-// slice position could select a stale rate.
+// slice position could select a stale rate. Timestamps are parsed rather
+// than compared lexically — fractional-second forms ("...00.5Z") do not
+// sort correctly as strings against whole-second forms ("...01Z").
 func currentPricingInfo(infos []skuPricingInfo) skuPricingInfo {
 	if len(infos) == 0 {
 		return skuPricingInfo{}
 	}
 	current := infos[0]
+	currentTime := parseEffectiveTime(current.EffectiveTime)
 	for _, pi := range infos[1:] {
-		// RFC3339 timestamps compare correctly as strings.
-		if pi.EffectiveTime > current.EffectiveTime {
+		if t := parseEffectiveTime(pi.EffectiveTime); t.After(currentTime) {
 			current = pi
+			currentTime = t
 		}
 	}
 	return current
+}
+
+// parseEffectiveTime parses a protobuf-Timestamp-style RFC3339 string;
+// unparseable values sort as the zero time (i.e. lose to any real timestamp).
+func parseEffectiveTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // extractUnitPrice gets the hourly unit price from pricing info.

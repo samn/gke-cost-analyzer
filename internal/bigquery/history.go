@@ -77,25 +77,12 @@ func BucketSeconds(d time.Duration) int64 {
 	}
 }
 
-// BuildSparklines groups time-series points by workload, in input order and
-// without gap handling. Prefer BuildSparklinesWithGaps for rendering.
-func BuildSparklines(points []TimeSeriesPoint) map[WorkloadKey][]float64 {
-	grouped := make(map[WorkloadKey][]float64)
-	for _, p := range points {
-		grouped[p.Key] = append(grouped[p.Key], p.BucketCost)
-	}
-	return grouped
-}
-
 // BuildSparklinesWithGaps groups time-series points by workload, ordering by
 // bucket time and zero-filling missing buckets between each workload's first
 // and last bucket. A missing bucket means no cost was recorded for it;
-// omitting it would compress time and misrepresent the trend.
+// omitting it would compress time and misrepresent the trend. bucketSeconds
+// must be positive (it always is: BucketSeconds never returns less than 300).
 func BuildSparklinesWithGaps(points []TimeSeriesPoint, bucketSeconds int64) map[WorkloadKey][]float64 {
-	if bucketSeconds <= 0 {
-		return BuildSparklines(points)
-	}
-
 	type window struct {
 		costs    map[int64]float64 // bucket unix seconds → cost
 		min, max int64

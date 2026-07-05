@@ -46,12 +46,12 @@ func (c CachedComputePrices) fetchedAt() time.Time { return c.FetchedAt }
 // decode into each other without error, so sharing a file would silently
 // corrupt whichever loads second.
 type Cache struct {
-	mu          sync.Mutex
-	dir         string
-	ttl         time.Duration
-	now         func() time.Time // for testing
-	fileName    string
-	fileNameSet bool // true when WithCacheFileName overrode the default
+	mu              sync.Mutex
+	dir             string
+	ttl             time.Duration
+	now             func() time.Time // for testing
+	fileName        string
+	computeFileName string
 }
 
 // CacheOption configures a Cache.
@@ -76,7 +76,7 @@ func WithNowFunc(fn func() time.Time) CacheOption {
 func WithCacheFileName(name string) CacheOption {
 	return func(c *Cache) {
 		c.fileName = name
-		c.fileNameSet = true
+		c.computeFileName = name
 	}
 }
 
@@ -88,10 +88,11 @@ func NewCache(opts ...CacheOption) (*Cache, error) {
 	}
 
 	c := &Cache{
-		dir:      filepath.Join(cacheDir, defaultCacheDir),
-		ttl:      DefaultCacheTTL,
-		now:      time.Now,
-		fileName: defaultCacheFileName,
+		dir:             filepath.Join(cacheDir, defaultCacheDir),
+		ttl:             DefaultCacheTTL,
+		now:             time.Now,
+		fileName:        defaultCacheFileName,
+		computeFileName: defaultComputeCacheFileName,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -103,14 +104,11 @@ func (c *Cache) path() string {
 	return filepath.Join(c.dir, c.fileName)
 }
 
-// computePath returns the file used for Compute Engine prices: the explicit
-// override when one was given, otherwise a default distinct from the
-// Autopilot file.
+// computePath returns the file used for Compute Engine prices — by default a
+// separate file from the Autopilot cache (the two on-disk shapes decode into
+// each other without error).
 func (c *Cache) computePath() string {
-	if c.fileNameSet {
-		return filepath.Join(c.dir, c.fileName)
-	}
-	return filepath.Join(c.dir, defaultComputeCacheFileName)
+	return filepath.Join(c.dir, c.computeFileName)
 }
 
 // loadCached is the generic implementation for loading cached data from disk.

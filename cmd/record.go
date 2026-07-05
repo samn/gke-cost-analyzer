@@ -93,7 +93,8 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
-	lister, err := newPodLister()
+	apiNS, _ := listNamespace()
+	lister, err := newPodLister(apiNS)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
@@ -134,17 +135,23 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	ticker := time.NewTicker(recordInterval)
 	defer ticker.Stop()
 
-	// takeSnapshot bounds each snapshot by the interval so a hung backend
-	// can't wedge the loop, records cost over the actual elapsed time since
-	// the last successful snapshot, and refreshes prices when the cache TTL
-	// lapses (a long-running daemon should not use launch-time prices
-	// forever).
+	// takeSnapshot bounds each snapshot so a hung backend can't wedge the
+	// loop, records cost over the actual elapsed time since the last
+	// successful snapshot, and refreshes prices when the cache TTL lapses
+	// (a long-running daemon should not use launch-time prices forever).
 	var lastSnapshot time.Time
 	pricesLoadedAt := time.Now()
 	takeSnapshot := func() {
 		if time.Since(pricesLoadedAt) > pricing.DefaultCacheTTL {
-			if err := refreshPrices(ctx, &autopilotCalc, &standardCalc); err != nil {
+			// Bound the refresh too: the paginated catalog fetch must not
+			// stall the loop indefinitely on a degraded billing API.
+			refreshCtx, cancelRefresh := context.WithTimeout(ctx, priceRefreshTimeout)
+			ap, std, err := refreshPrices(refreshCtx, autopilotCalc, standardCalc)
+			cancelRefresh()
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: refreshing prices failed, keeping previous prices: %v\n", err)
+			} else {
+				autopilotCalc, standardCalc = ap, std
 			}
 			// Even on failure, wait a full TTL before retrying to avoid
 			// hammering the billing API every tick.
@@ -153,7 +160,7 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 
 		now := time.Now()
 		intervalSecs := snapshotIntervalSecs(lastSnapshot, now, recordInterval)
-		snapCtx, cancelSnap := context.WithTimeout(ctx, recordInterval)
+		snapCtx, cancelSnap := context.WithTimeout(ctx, snapshotTimeout(recordInterval))
 		err := recordSnapshot(snapCtx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile)
 		cancelSnap()
 		if err != nil {
@@ -192,24 +199,39 @@ func snapshotIntervalSecs(lastSnapshot, now time.Time, nominal time.Duration) in
 	return int64(elapsed.Seconds())
 }
 
-// refreshPrices reloads pricing (via cache or API) and swaps in new
-// calculators. On error the existing calculators are left untouched.
-func refreshPrices(ctx context.Context, autopilotCalc **cost.Calculator, standardCalc **cost.StandardCalculator) error {
-	if *autopilotCalc != nil {
+// minSnapshotTimeout floors the per-snapshot deadline: with a short
+// --interval, a legitimately long snapshot (large cluster, slow backends)
+// must still be able to complete, or the daemon would cancel every attempt
+// and record nothing forever.
+const minSnapshotTimeout = 2 * time.Minute
+
+// priceRefreshTimeout bounds the daily paginated billing-catalog refetch.
+const priceRefreshTimeout = 10 * time.Minute
+
+// snapshotTimeout returns the deadline for one snapshot cycle.
+func snapshotTimeout(interval time.Duration) time.Duration {
+	return max(interval, minSnapshotTimeout)
+}
+
+// refreshPrices reloads pricing (via cache or API) and returns fresh
+// calculators for the ones that were active. On error the caller keeps its
+// existing calculators.
+func refreshPrices(ctx context.Context, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) (*cost.Calculator, *cost.StandardCalculator, error) {
+	if autopilotCalc != nil {
 		prices, err := loadPrices(ctx)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
-		*autopilotCalc = cost.NewCalculator(region, pricing.FromPrices(prices), nil)
+		autopilotCalc = cost.NewCalculator(region, pricing.FromPrices(prices), nil)
 	}
-	if *standardCalc != nil {
+	if standardCalc != nil {
 		computePrices, err := loadComputePrices(ctx)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
-		*standardCalc = cost.NewStandardCalculator(region, pricing.FromComputePrices(computePrices), nil)
+		standardCalc = cost.NewStandardCalculator(region, pricing.FromComputePrices(computePrices), nil)
 	}
-	return nil
+	return autopilotCalc, standardCalc, nil
 }
 
 // snapshotConfig holds the metadata needed to convert aggregated costs to BigQuery snapshots.
@@ -302,7 +324,7 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		ProjectID:       sc.projectID,
 		Region:          sc.region,
 		ClusterName:     sc.clusterName,
-		Namespace:       a.Namespace,
+		Namespace:       a.Key.Namespace,
 		Team:            a.Key.Team,
 		Workload:        a.Key.Workload,
 		Subtype:         a.Key.Subtype,

@@ -27,7 +27,6 @@ type GroupKey struct {
 type AggregatedCost struct {
 	Key            GroupKey
 	CostMode       string // "autopilot" or "standard"
-	Namespace      string // mirrors Key.Namespace (for display convenience)
 	PodCount       int
 	TotalCPUVCPU   float64
 	TotalMemGB     float64
@@ -88,9 +87,8 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 		if !ok {
 			ga = &groupAccum{
 				agg: AggregatedCost{
-					Key:       key,
-					CostMode:  costMode,
-					Namespace: key.Namespace,
+					Key:      key,
+					CostMode: costMode,
 				},
 			}
 			groups[key] = ga

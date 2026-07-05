@@ -100,12 +100,16 @@ overflow for absurd inputs).
 
 The command executes two BigQuery queries (both always include `cluster_name`
 in SELECT and GROUP BY to distinguish rows from different clusters):
-1. **Aggregated costs**: groups by cluster_name/team/workload/subtype/namespace/
-   cost_mode, computing total spend, average $/hr, average pod count, CPU/memory
-   requests, and utilization metrics (when available). The average $/hr divides
-   `SUM(total_cost)` by the covered time `SUM(interval_seconds)/3600` (not the
-   MAX-MIN timestamp span, which has an N/(N-1) fencepost error and is NULL for
-   single-snapshot groups).
+1. **Aggregated costs**: a two-level aggregation. Rows first collapse per
+   snapshot timestamp (record writes one row per is_spot value per snapshot;
+   summing `interval_seconds` across those sibling rows would double-count the
+   covered time and distort the AVG columns), then aggregate across snapshots
+   by cluster_name/team/workload/subtype/namespace/cost_mode — computing total
+   spend, average $/hr, average pod count, CPU/memory requests, and utilization
+   metrics (when available). The average $/hr divides `SUM(total_cost)` by the
+   covered time `SUM(interval_seconds)/3600` over per-snapshot windows (not
+   the MAX-MIN timestamp span, which has an N/(N-1) fencepost error and is
+   NULL for single-snapshot groups).
 2. **Time-bucketed costs**: groups by cluster_name/team/workload/subtype/
    namespace/cost_mode and time bucket for sparkline rendering. Bucket size
    adapts to the time range (5min for ≤6h, 30min for ≤1d, 1hr for ≤3d, 4hr for
@@ -118,11 +122,15 @@ query parameters (never interpolated into SQL); project/dataset/table
 identifiers are validated. Query results follow BigQuery's `pageToken`
 pagination so large result sets are not truncated.
 
-The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [SUBTYPE], [MODE],
-AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and
-optionally CPU%, MEM%, WASTE when utilization data is present. The CLUSTER
+The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [NAMESPACE], [SUBTYPE],
+[MODE], AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT,
+and optionally CPU%, MEM%, WASTE when utilization data is present. The CLUSTER
 column is shown when `--all-clusters` is used. When filtering to a single
-cluster, the cluster name is displayed in the header instead.
+cluster, the cluster name is displayed in the header instead. The NAMESPACE
+column (in both `watch` and `history`) appears automatically when the rows
+span more than one namespace — namespace is part of the group identity, so
+without it identical-label workloads in different namespaces would render as
+indistinguishable duplicate rows.
 
 Interactive features match the `watch` command: team grouping with
 expand/collapse (Enter/a), flat/grouped toggle (g), column sorting (1-9,0),
@@ -520,8 +528,14 @@ range equals the actual cost (or waste) for that period.
 
 **Daemon resilience**: the process traps SIGINT and SIGTERM for graceful
 shutdown (Kubernetes sends SIGTERM). Each snapshot runs under a context
-bounded by the interval, and all GCP/Prometheus HTTP clients have a 30s
-timeout, so a hung backend cannot wedge the loop.
+bounded by max(interval, 2 minutes) — the floor lets legitimately long
+snapshots complete under short intervals — and the daily price refresh is
+bounded by its own 10-minute deadline. All GCP/Prometheus HTTP clients have
+request timeouts, so a hung backend cannot wedge the loop.
+
+Known limitation: the elapsed-time window is tracked in process memory, so
+the first snapshot after a restart covers only the nominal interval — cost
+incurred while the daemon was down is not retroactively recorded.
 
 #### Edge cases
 - **Empty snapshot list**: `Write()` returns nil immediately (no API call).

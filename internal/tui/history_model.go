@@ -85,17 +85,6 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=":
-			key := rune(msg.String()[0])
-			if col, ok := HistoryColumnForKey(key, m.vis); ok {
-				if col == m.sortCfg.Column {
-					m.sortCfg.Asc = !m.sortCfg.Asc
-				} else {
-					m.sortCfg = HistorySortConfig{Column: col, Asc: true}
-				}
-				m.rebuildDisplay()
-			}
-			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -121,6 +110,20 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rebuildDisplay()
 			m.clampCursor()
 			return m, nil
+		default:
+			// Sort keys are dispatched through the shared sortKeys sequence
+			// so adding a column/key cannot silently miss the handler.
+			if k := msg.String(); len(k) == 1 {
+				if col, ok := HistoryColumnForKey(rune(k[0]), m.vis); ok {
+					if col == m.sortCfg.Column {
+						m.sortCfg.Asc = !m.sortCfg.Asc
+					} else {
+						m.sortCfg = HistorySortConfig{Column: col, Asc: true}
+					}
+					m.rebuildDisplay()
+				}
+			}
+			return m, nil
 		}
 
 	case historyDataMsg:
@@ -132,6 +135,19 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if r.AvgCPUUtil != nil {
 				m.vis.Utilization = true
 				break
+			}
+		}
+
+		// Namespace is part of the row identity: when the rows span more
+		// than one namespace, show the column so identical-label workloads
+		// in different namespaces are distinguishable.
+		if len(m.rows) > 0 {
+			first := m.rows[0].Namespace
+			for _, r := range m.rows[1:] {
+				if r.Namespace != first {
+					m.vis.Namespace = true
+					break
+				}
 			}
 		}
 
@@ -287,21 +303,13 @@ func (m *HistoryModel) toggleExpandAll() {
 func (m HistoryModel) helpText() string {
 	defs := historyVisibleColumns(m.vis)
 
-	help := "Sort:"
-	keyIdx := 0
+	var names []string
 	for _, d := range defs {
-		if !d.sortable {
-			continue
+		if d.sortable {
+			names = append(names, orDefault(d.helpName, d.header))
 		}
-		name := d.helpName
-		if name == "" {
-			name = d.header
-		}
-		if key, ok := sortKeyForIndex(keyIdx); ok {
-			help += fmt.Sprintf(" %c=%s", key, name)
-		}
-		keyIdx++
 	}
+	help := sortKeyHelp(names)
 	help += " · ↑↓=Navigate"
 	if m.grouped {
 		help += " Enter=Expand/Collapse a=Toggle All"

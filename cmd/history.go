@@ -34,8 +34,8 @@ func init() {
 var historyCmd = &cobra.Command{
 	Use:   "history <duration>",
 	Short: "View historical cost data from BigQuery",
-	Long:  "Query BigQuery for historical cost snapshots and display aggregated data with trend sparklines.\n\nDuration format: 3h (hours), 3d (days), 1w (weeks).",
-	Args:  cobra.ExactArgs(1),
+	Long:  "Query BigQuery for historical cost snapshots and display aggregated data with trend sparklines.\n\nDuration format: 3h (hours), 3d (days), 1w (weeks). Maximum 5 years.",
+	Args:  usageArgs(cobra.ExactArgs(1)),
 	RunE:  runHistory,
 }
 

@@ -22,8 +22,8 @@ func init() {
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Create BigQuery dataset and table for cost snapshots",
-	Long:  "Create the BigQuery dataset and table (if they don't exist) needed by the record command.",
+	Short: "Create or migrate the BigQuery dataset and table for cost snapshots",
+	Long:  "Create the BigQuery dataset and table needed by the record command. If the table already exists, its schema is migrated: columns added in newer versions (all NULLABLE) are patched in.",
 	RunE:  runSetup,
 }
 

@@ -13,11 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Native sidecar containers (init containers with `restartPolicy: Always`) now count toward pod resource requests — Autopilot bills them and they consume node resources. Classic init containers remain excluded.
 - `record` snapshots now cover the actual elapsed time since the last successful snapshot instead of the nominal interval, so missed or slow ticks no longer permanently undercount recorded cost.
 - `record` refreshes cached prices every 24h instead of using launch-time prices for the daemon's lifetime.
-- The history `AVG $/HR` is computed from the covered time (`SUM(interval_seconds)`) instead of the snapshot timestamp span, removing a systematic overestimate and the $0/hr result for single-snapshot workloads.
+- The history `AVG $/HR` is computed from the covered time (`SUM(interval_seconds)` over per-snapshot windows) instead of the snapshot timestamp span, removing a systematic overestimate and the $0/hr result for single-snapshot workloads. The aggregated query collapses spot/on-demand sibling rows per snapshot first, so mixed workloads no longer double-count covered time (halving $/hr) or understate AVG PODS/CPU/MEM.
+- The `record` per-snapshot deadline is floored at 2 minutes (a short `--interval` could otherwise cancel every legitimately long snapshot forever) and the daily price refresh runs under its own 10-minute bound.
+- `setup` command description and README reflect schema migration; `history --help` documents the 5-year duration cap.
 - `history` shows the CLUSTER column (with a warning) when cluster auto-detection fails and no `--cluster-name` is given, instead of silently blending clusters.
 - Upgraded all GitHub Actions to latest major versions and pinned to commit SHAs: `actions/checkout` v4 → v6, `actions/cache` v4 → v5, `jdx/mise-action` v2 → v4, `softprops/action-gh-release` v2 → v3, `docker/login-action` v3 → v4, `docker/setup-buildx-action` v3 → v4, `docker/build-push-action` v6 → v7
 
 ### Added
+- NAMESPACE column in `watch` and `history`, shown automatically when rows span more than one namespace (namespace is part of the group identity; without the column, identical-label workloads in different namespaces looked like duplicate rows). Sortable like the other columns.
 - Event-log scrollback in `watch`: `[` scrolls into history, `]` back toward the newest events (previously documented but not implemented).
 - Sort keys `-` and `=` reach the 11th+ sortable columns (WASTE was unreachable with all optional columns enabled, and the help footer advertised a nonexistent "11=" key).
 - `setup` migrates existing tables: missing NULLABLE columns (e.g. `cost_mode`, utilization fields) are added via schema PATCH instead of leaving inserts failing forever.

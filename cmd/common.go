@@ -13,6 +13,7 @@ import (
 	"github.com/samn/gke-cost-analyzer/internal/kube"
 	"github.com/samn/gke-cost-analyzer/internal/pricing"
 	"github.com/samn/gke-cost-analyzer/internal/prometheus"
+	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -35,6 +36,18 @@ func usageErrorf(format string, args ...any) error {
 func IsUsageError(err error) bool {
 	var ue usageError
 	return errors.As(err, &ue)
+}
+
+// usageArgs wraps a cobra positional-args validator so its failures (e.g.
+// a missing argument) classify as usage errors rather than being reported
+// to Sentry as application errors.
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
 }
 
 // gcpHTTPTimeout bounds each GCP API request so a hung backend cannot wedge
@@ -109,9 +122,12 @@ func listNamespace() (apiNS, postFilterNS string) {
 	return namespace, ""
 }
 
-func newPodLister() (*kube.PodLister, error) {
+// newPodLister builds a pod lister restricted to apiNS at the Kubernetes API
+// level (empty = cluster-wide). Cost-computing commands must pass the apiNS
+// from listNamespace(); commands that don't compute costs (unmatched-pods)
+// can filter API-side unconditionally.
+func newPodLister(apiNS string) (*kube.PodLister, error) {
 	var opts []kube.PodListerOption
-	apiNS, _ := listNamespace()
 	if apiNS != "" {
 		opts = append(opts, kube.WithNamespace(apiNS))
 	}

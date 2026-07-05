@@ -73,7 +73,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
-	lister, err := newPodLister()
+	apiNS, _ := listNamespace()
+	lister, err := newPodLister(apiNS)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}

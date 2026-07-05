@@ -444,3 +444,35 @@ func TestExtractAutopilotPricesEmptyRegionsAndServiceRegions(t *testing.T) {
 		t.Errorf("expected 0 prices when both Regions and ServiceRegions are empty, got %d", len(prices))
 	}
 }
+
+func TestCurrentPricingInfoTimestampForms(t *testing.T) {
+	// effectiveTime is a protobuf Timestamp JSON encoding, which may carry
+	// fractional seconds. Lexical comparison sorts "...00.5Z" BEFORE
+	// "...01Z" incorrectly ('.' < any digit is fine, but '.5Z' vs 'Z' at the
+	// same prefix breaks: '2025-01-01T00:00:00.5Z' > '2025-01-01T00:00:00Z'
+	// lexically is false since '.' < 'Z'), so timestamps must be parsed.
+	older := skuPricingInfo{
+		EffectiveTime: "2025-01-01T00:00:00Z",
+		PricingExpression: pricingExpression{
+			TieredRates: []tieredRate{{UnitPrice: unitPrice{Nanos: 111}}},
+		},
+	}
+	newer := skuPricingInfo{
+		EffectiveTime: "2025-01-01T00:00:00.500Z", // half a second LATER
+		PricingExpression: pricingExpression{
+			TieredRates: []tieredRate{{UnitPrice: unitPrice{Nanos: 222}}},
+		},
+	}
+
+	got := currentPricingInfo([]skuPricingInfo{older, newer})
+	if got.EffectiveTime != newer.EffectiveTime {
+		t.Errorf("selected %q, want the fractional-second later record %q", got.EffectiveTime, newer.EffectiveTime)
+	}
+
+	// Records without a parseable effectiveTime lose to parseable ones.
+	unparseable := skuPricingInfo{EffectiveTime: ""}
+	got = currentPricingInfo([]skuPricingInfo{unparseable, older})
+	if got.EffectiveTime != older.EffectiveTime {
+		t.Errorf("selected %q, want the parseable record", got.EffectiveTime)
+	}
+}

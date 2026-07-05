@@ -53,7 +53,7 @@ func TestRenderTable(t *testing.T) {
 
 	// Use expanded mode to see workload details like the old flat view.
 	drs := expandedDisplayRows(aggs)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Verify header is present (no SUBTYPE since showSubtype=false)
 	for _, header := range []string{"TEAM", "WORKLOAD", "PODS", "CPU REQ", "MEM REQ", "$/HR", "COST", "SPOT"} {
@@ -90,7 +90,7 @@ func TestRenderTable(t *testing.T) {
 }
 
 func TestRenderTableEmpty(t *testing.T) {
-	output := RenderTable(nil, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(nil, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Empty table with no data should still render something (headers + total)
 	if !strings.Contains(output, "TOTAL") {
@@ -109,7 +109,7 @@ func TestRenderTableCollapsedTeams(t *testing.T) {
 	}
 
 	drs := collapsedDisplayRows(aggs)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Collapsed view should show team summary with workload count
 	if !strings.Contains(output, "2 workloads") {
@@ -137,7 +137,7 @@ func TestRenderTableExpandedTeam(t *testing.T) {
 	groups := groupByTeam(aggs)
 	expanded := map[string]bool{"alpha": true}
 	drs := buildDisplayRows(groups, expanded)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Expanded view should show the expanded arrow
 	if !strings.Contains(output, "▼") {
@@ -159,7 +159,7 @@ func TestRenderTableTotalIncludesPodsAndResources(t *testing.T) {
 	}
 
 	drs := collapsedDisplayRows(aggs)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Total row should include pod count (5), CPU (4.00), MEM (8.0 GB)
 	lines := strings.Split(output, "\n")
@@ -204,7 +204,7 @@ func TestRenderTableAllColumns(t *testing.T) {
 
 	// Use expanded mode to see all workloads.
 	drs := expandedDisplayRows(aggs)
-	output := RenderTable(drs, true, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: true, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Verify SUBTYPE header is present when showSubtype=true
 	if !strings.Contains(output, "SUBTYPE") {
@@ -235,7 +235,7 @@ func TestRenderTableMissingLabels(t *testing.T) {
 	}
 
 	drs := expandedDisplayRows(aggs)
-	output := RenderTable(drs, true, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: true, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Missing labels should show as "-"
 	if !strings.Contains(output, "-") {
@@ -252,7 +252,7 @@ func TestRenderTableSortIndicator(t *testing.T) {
 
 	// Sort by cost descending — only COST header should have indicator
 	cfg := SortConfig{Column: SortByCost, Asc: false}
-	output := RenderTable(drs, false, false, false, cfg, -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, cfg, -1, nil)
 
 	if !strings.Contains(output, "COST v") {
 		t.Errorf("expected 'COST v' indicator in output:\n%s", output)
@@ -264,7 +264,7 @@ func TestRenderTableSortIndicator(t *testing.T) {
 
 	// Sort by team ascending — TEAM header should have ^ indicator
 	cfg2 := SortConfig{Column: SortByTeam, Asc: true}
-	output2 := RenderTable(drs, false, false, false, cfg2, -1, nil)
+	output2 := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, cfg2, -1, nil)
 
 	if !strings.Contains(output2, "TEAM ^") {
 		t.Errorf("expected 'TEAM ^' indicator in output:\n%s", output2)
@@ -282,7 +282,7 @@ func TestRenderTableSortIndicatorWithSubtype(t *testing.T) {
 
 	drs := collapsedDisplayRows(aggs)
 	cfg := SortConfig{Column: SortBySubtype, Asc: true}
-	output := RenderTable(drs, true, false, false, cfg, -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: true, Mode: false, Utilization: false}, cfg, -1, nil)
 
 	if !strings.Contains(output, "SUBTYPE ^") {
 		t.Errorf("expected 'SUBTYPE ^' indicator in output:\n%s", output)
@@ -297,7 +297,7 @@ func TestRenderTableCursorHighlight(t *testing.T) {
 
 	drs := collapsedDisplayRows(aggs)
 	// Cursor at row 0 - this should render without errors.
-	output := RenderTable(drs, false, false, false, DefaultSort(), 0, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), 0, nil)
 	if !strings.Contains(output, "alpha") {
 		t.Errorf("expected alpha in output:\n%s", output)
 	}
@@ -369,7 +369,7 @@ func TestRenderTableSeparatorRow(t *testing.T) {
 	}
 
 	drs := collapsedDisplayRows(aggs)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Separator row should contain horizontal line characters between data and TOTAL.
 	if !strings.Contains(output, "─") {
@@ -398,7 +398,7 @@ func TestRenderTableCursorOnLastRow(t *testing.T) {
 	lastIdx := len(drs) - 1
 
 	// Cursor on last row should render without issues.
-	output := RenderTable(drs, false, false, false, DefaultSort(), lastIdx, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), lastIdx, nil)
 	if !strings.Contains(output, "gamma") {
 		t.Errorf("expected gamma in output:\n%s", output)
 	}
@@ -414,7 +414,7 @@ func TestRenderTableFlatMode(t *testing.T) {
 	}
 
 	drs := buildFlatDisplayRows(aggs)
-	output := RenderTable(drs, false, false, false, DefaultSort(), -1, nil)
+	output := RenderTable(drs, ColumnVisibility{Subtype: false, Mode: false, Utilization: false}, DefaultSort(), -1, nil)
 
 	// Flat mode should show both team and workload for each row
 	if !strings.Contains(output, "alpha") {

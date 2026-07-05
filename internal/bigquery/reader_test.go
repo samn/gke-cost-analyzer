@@ -256,8 +256,8 @@ func TestQueryTimeSeries(t *testing.T) {
 		}
 		// Namespace is part of the workload identity, so the time-series
 		// query must group by it (matching the aggregated query).
-		if !strings.Contains(req.Query, "GROUP BY cluster_name, team, workload, subtype, namespace, cost_mode, bucket") {
-			t.Errorf("SQL should group by namespace, got: %s", req.Query)
+		if !strings.Contains(req.Query, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), bucket") {
+			t.Errorf("SQL should group by namespace and normalized cost_mode, got: %s", req.Query)
 		}
 
 		resp := queryResponse{
@@ -472,6 +472,24 @@ func TestQueryAggregatedCostsSQLShape(t *testing.T) {
 	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
 		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
 	}
+	// The grouping must use the IFNULL expression, not the bare column name:
+	// a bare `GROUP BY cost_mode` next to an identically-named SELECT alias
+	// is at best ambiguous, and grouping on the raw column would keep legacy
+	// NULL rows in a separate group that then displays as a duplicate
+	// 'autopilot' row.
+	if !strings.Contains(receivedSQL, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), timestamp") {
+		t.Errorf("per-snapshot grouping should group by the IFNULL expression and timestamp, got: %s", receivedSQL)
+	}
+	// Record writes one row per is_spot value per snapshot. Summing
+	// interval_seconds across those sibling rows would double-count the
+	// covered time (halving $/hr) and distort the AVG columns, so rows must
+	// first collapse per snapshot timestamp before the range aggregation.
+	if !strings.Contains(receivedSQL, "WITH per_snapshot AS") || !strings.Contains(receivedSQL, "FROM per_snapshot") {
+		t.Errorf("expected two-level aggregation via per_snapshot CTE, got: %s", receivedSQL)
+	}
+	if !strings.Contains(receivedSQL, "ANY_VALUE(interval_seconds)") {
+		t.Errorf("interval_seconds must be taken once per snapshot, not summed across sibling rows, got: %s", receivedSQL)
+	}
 }
 
 func TestQueryTimeSeriesNormalizesCostMode(t *testing.T) {
@@ -492,6 +510,10 @@ func TestQueryTimeSeriesNormalizesCostMode(t *testing.T) {
 	}
 	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
 		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
+	}
+	// Group by the IFNULL expression, not the bare (ambiguous) column name.
+	if !strings.Contains(receivedSQL, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), bucket") {
+		t.Errorf("time-series grouping should use the IFNULL expression, got: %s", receivedSQL)
 	}
 }
 

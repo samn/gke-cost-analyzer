@@ -79,7 +79,7 @@ func TestBuildSparklines(t *testing.T) {
 		{Key: k2, Bucket: now, BucketCost: 10.0},
 	}
 
-	result := BuildSparklines(points)
+	result := BuildSparklinesWithGaps(points, 3600)
 
 	if len(result) != 2 {
 		t.Fatalf("expected 2 keys, got %d", len(result))

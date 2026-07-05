@@ -401,3 +401,44 @@ func TestHistoryModelSingleClusterHeader(t *testing.T) {
 		t.Error("view should NOT contain CLUSTER column header when showCluster=false")
 	}
 }
+
+func TestHistoryNamespaceColumnShownForMultiNamespaceRows(t *testing.T) {
+	m := testHistoryModel(&mockFetcher{})
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{Team: "a", Workload: "web", Namespace: "prod", TotalCost: 5},
+			{Team: "a", Workload: "web", Namespace: "staging", TotalCost: 3},
+		},
+	}
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	if !hm.vis.Namespace {
+		t.Fatal("multi-namespace rows should enable the NAMESPACE column")
+	}
+	// Flat view so workload rows (and their namespace cells) are visible.
+	updated, _ = hm.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	hm = updated.(HistoryModel)
+	view := hm.View().Content
+	if !strings.Contains(view, "NAMESPACE") || !strings.Contains(view, "staging") {
+		t.Errorf("namespace column/values missing from view:\n%s", view)
+	}
+}
+
+func TestHistoryNamespaceColumnHiddenForSingleNamespace(t *testing.T) {
+	m := testHistoryModel(&mockFetcher{})
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{Team: "a", Workload: "web", Namespace: "default", TotalCost: 5},
+			{Team: "b", Workload: "api", Namespace: "default", TotalCost: 3},
+		},
+	}
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	if hm.vis.Namespace {
+		t.Error("single-namespace rows should not enable the NAMESPACE column")
+	}
+}

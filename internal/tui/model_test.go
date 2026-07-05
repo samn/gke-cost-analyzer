@@ -1091,3 +1091,42 @@ func TestCursorClampedWhenRefreshShrinksTable(t *testing.T) {
 		t.Errorf("cursor %d out of bounds after refresh (rows=%d)", m.cursor, len(m.displayRows))
 	}
 }
+
+func TestNamespaceColumnShownForMultiNamespaceRows(t *testing.T) {
+	// Namespace is part of the group identity; when rows span more than one
+	// namespace the NAMESPACE column must appear or identical-label
+	// workloads render as indistinguishable duplicates.
+	m := testModel(&mockPodLister{})
+
+	msg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Namespace: "prod", Team: "a", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Namespace: "staging", Team: "a", Workload: "web"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+	m.grouped = false
+	m.rebuildDisplay()
+
+	view := m.View().Content
+	if !strings.Contains(view, "NAMESPACE") {
+		t.Errorf("multi-namespace rows should show the NAMESPACE column, got:\n%s", view)
+	}
+	if !strings.Contains(view, "prod") || !strings.Contains(view, "staging") {
+		t.Errorf("namespace values should be rendered, got:\n%s", view)
+	}
+}
+
+func TestNamespaceColumnHiddenForSingleNamespace(t *testing.T) {
+	m := testModel(&mockPodLister{})
+
+	msg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Namespace: "default", Team: "a", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Namespace: "default", Team: "b", Workload: "api"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if strings.Contains(m.View().Content, "NAMESPACE") {
+		t.Error("single-namespace rows should not show the NAMESPACE column")
+	}
+}
