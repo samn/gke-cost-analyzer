@@ -67,8 +67,9 @@ type Model struct {
 	promProject  string // GCP project queried for Prometheus metrics
 
 	// Trend tracking for cost aberration detection.
-	tracker    *trend.Tracker // nil if disabled
-	showEvents bool           // whether to show the event log panel
+	tracker     *trend.Tracker // nil if disabled
+	showEvents  bool           // whether to show the event log panel
+	eventScroll int            // scrollback offset into the event log (0 = latest)
 
 	lister        PodLister
 	autopilotCalc *cost.Calculator
@@ -168,6 +169,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "e":
 			if m.tracker != nil {
 				m.showEvents = !m.showEvents
+				m.eventScroll = 0
+			}
+			return m, nil
+		case "[":
+			if m.tracker != nil && m.showEvents {
+				maxOffset := len(m.tracker.Events()) - eventLogMaxLines
+				if m.eventScroll < maxOffset {
+					m.eventScroll++
+				}
+			}
+			return m, nil
+		case "]":
+			if m.eventScroll > 0 {
+				m.eventScroll--
 			}
 			return m, nil
 		}
@@ -308,7 +323,7 @@ func (m Model) View() tea.View {
 	result := header + "\n\n" + RenderTable(m.displayRows, m.showSubtype, m.showUtilization, m.showMode, m.sortCfg, m.cursor, aberrations) + "\n\n" + help + "\n"
 
 	if m.showEvents && m.tracker != nil {
-		result += "\n" + RenderEventLog(m.tracker.Events(), time.Now(), eventLogMaxLines)
+		result += "\n" + RenderEventLogScrolled(m.tracker.Events(), time.Now(), eventLogMaxLines, m.eventScroll)
 	}
 
 	v := tea.NewView(result)
@@ -383,6 +398,9 @@ func (m Model) helpText() string {
 	}
 	if m.tracker != nil {
 		help += " e=Events"
+		if m.showEvents {
+			help += " [/]=Scroll"
+		}
 	}
 	help += " · q=Quit"
 	return help

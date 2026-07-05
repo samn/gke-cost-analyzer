@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,22 +20,45 @@ var (
 // RenderEventLog renders the event log panel. Shows the most recent maxLines
 // events, most recent at the bottom.
 func RenderEventLog(events []trend.Event, now time.Time, maxLines int) string {
+	return RenderEventLogScrolled(events, now, maxLines, 0)
+}
+
+// RenderEventLogScrolled renders the event log panel with a scrollback
+// offset: 0 shows the most recent events, offset N shifts the window N
+// events into the past (clamped to the available history).
+func RenderEventLogScrolled(events []trend.Event, now time.Time, maxLines, scrollOffset int) string {
 	if len(events) == 0 {
 		return eventHeaderStyle.Render("--- Events (waiting for data) ---")
 	}
 
 	total := len(events)
-	startIdx := total - maxLines
+	maxOffset := total - maxLines
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if scrollOffset > maxOffset {
+		scrollOffset = maxOffset
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	endIdx := total - scrollOffset
+	startIdx := endIdx - maxLines
 	if startIdx < 0 {
 		startIdx = 0
 	}
 
-	header := eventHeaderStyle.Render("--- Events ---")
+	headerText := "--- Events ---"
+	if scrollOffset > 0 {
+		headerText = fmt.Sprintf("--- Events (%d older, ]=newer) ---", scrollOffset)
+	}
+	header := eventHeaderStyle.Render(headerText)
 
 	var lines []string
 	lines = append(lines, header)
 
-	for i := startIdx; i < total; i++ {
+	for i := startIdx; i < endIdx; i++ {
 		line := trend.FormatEvent(events[i], now)
 		styled := styleEventLine(events[i], line)
 		lines = append(lines, styled)
