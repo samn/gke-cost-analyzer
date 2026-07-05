@@ -154,7 +154,7 @@ Options:
 - `--workload-label`: Pod label for workload grouping (default: "app")
 - `--subtype-label`: Pod label for subtype grouping (optional)
 
-Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `e` toggle event log, `[`/`]` scroll event log, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `e` toggle event log, `[`/`]` scroll event log, `1`-`9`,`0`,`-`,`=` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
 
 ### Record costs to BigQuery
 
@@ -212,7 +212,7 @@ Options:
 - `--namespace`: Filter to a specific namespace
 - `--team`: Filter by team name
 
-Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `1`-`9`,`0`,`-`,`=` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
 
 ### Find pods missing labels
 
