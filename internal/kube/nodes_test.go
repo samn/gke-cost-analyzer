@@ -14,6 +14,9 @@ import (
 )
 
 func TestListNodes(t *testing.T) {
+	// GCE bills the full machine capacity, not the Kubernetes allocatable
+	// value (capacity minus kube/system reserves) — node cost must be based
+	// on Capacity.
 	nodes := []runtime.Object{
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -23,6 +26,10 @@ func TestListNodes(t *testing.T) {
 				},
 			},
 			Status: corev1.NodeStatus{
+				Capacity: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("4"),
+					corev1.ResourceMemory: resource.MustParse("16Gi"),
+				},
 				Allocatable: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("3920m"),
 					corev1.ResourceMemory: resource.MustParse("14Gi"),
@@ -38,6 +45,10 @@ func TestListNodes(t *testing.T) {
 				},
 			},
 			Status: corev1.NodeStatus{
+				Capacity: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("2"),
+					corev1.ResourceMemory: resource.MustParse("4Gi"),
+				},
 				Allocatable: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("940m"),
 					corev1.ResourceMemory: resource.MustParse("3Gi"),
@@ -53,7 +64,7 @@ func TestListNodes(t *testing.T) {
 				},
 			},
 			Status: corev1.NodeStatus{
-				Allocatable: corev1.ResourceList{
+				Capacity: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("2"),
 					corev1.ResourceMemory: resource.MustParse("8Gi"),
 				},
@@ -89,12 +100,12 @@ func TestListNodes(t *testing.T) {
 	if n2.MachineFamily != "n2" {
 		t.Errorf("n2 family = %s, want n2", n2.MachineFamily)
 	}
-	if n2.VCPU != 3.92 {
-		t.Errorf("n2 VCPU = %f, want 3.92", n2.VCPU)
+	if n2.VCPU != 4.0 {
+		t.Errorf("n2 VCPU = %f, want 4.0 (capacity, not allocatable)", n2.VCPU)
 	}
-	expectedMemGB := float64(14*1024*1024*1024) / 1e9
+	expectedMemGB := float64(16*1024*1024*1024) / 1e9
 	if n2.MemoryGB != expectedMemGB {
-		t.Errorf("n2 MemoryGB = %f, want %f", n2.MemoryGB, expectedMemGB)
+		t.Errorf("n2 MemoryGB = %f, want %f (capacity, not allocatable)", n2.MemoryGB, expectedMemGB)
 	}
 	if n2.IsSpot {
 		t.Error("n2 should not be spot")
@@ -107,8 +118,46 @@ func TestListNodes(t *testing.T) {
 	if !e2.IsSpot {
 		t.Error("e2 should be spot")
 	}
-	if e2.VCPU != 0.94 {
-		t.Errorf("e2 VCPU = %f, want 0.94", e2.VCPU)
+	if e2.VCPU != 2.0 {
+		t.Errorf("e2 VCPU = %f, want 2.0 (capacity, not allocatable)", e2.VCPU)
+	}
+}
+
+func TestListNodesFallsBackToAllocatable(t *testing.T) {
+	// If Capacity is absent (unusual), fall back to Allocatable rather than
+	// reporting a zero-cost node.
+	nodes := []runtime.Object{
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "gke-cluster-pool-nocap",
+				Labels: map[string]string{
+					"node.kubernetes.io/instance-type": "n2-standard-4",
+				},
+			},
+			Status: corev1.NodeStatus{
+				Allocatable: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("3920m"),
+					corev1.ResourceMemory: resource.MustParse("14Gi"),
+				},
+			},
+		},
+	}
+
+	client := fake.NewSimpleClientset(nodes...)
+	nl, err := NewNodeLister(WithNodeClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := nl.ListNodes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(result))
+	}
+	if result[0].VCPU != 3.92 {
+		t.Errorf("VCPU = %f, want 3.92 (allocatable fallback)", result[0].VCPU)
 	}
 }
 

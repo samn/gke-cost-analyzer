@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -14,8 +16,8 @@ type NodeInfo struct {
 	Name          string
 	MachineType   string  // from label: node.kubernetes.io/instance-type (e.g., "n2-standard-4")
 	MachineFamily string  // parsed from MachineType (e.g., "n2")
-	VCPU          float64 // from node.Status.Allocatable cpu
-	MemoryGB      float64 // from node.Status.Allocatable memory (bytes / 1e9)
+	VCPU          float64 // from node.Status.Capacity cpu (what GCE bills)
+	MemoryGB      float64 // from node.Status.Capacity memory (bytes / 1e9)
 	IsSpot        bool    // from label: cloud.google.com/gke-spot=true
 }
 
@@ -69,20 +71,23 @@ func (nl *NodeLister) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 		machineType := node.Labels["node.kubernetes.io/instance-type"]
 		family := parseMachineFamily(machineType)
 
+		// GCE bills the full machine capacity, not the Kubernetes allocatable
+		// value (capacity minus kube/system reserves). Fall back to
+		// Allocatable only if Capacity is absent.
 		var vcpu float64
-		if cpuQ, ok := node.Status.Allocatable["cpu"]; ok {
+		if cpuQ, ok := nodeQuantity(node.Status, "cpu"); ok {
 			vcpu = float64(cpuQ.MilliValue()) / 1000.0
 		}
 
 		var memGB float64
-		if memQ, ok := node.Status.Allocatable["memory"]; ok {
+		if memQ, ok := nodeQuantity(node.Status, "memory"); ok {
 			memGB = float64(memQ.Value()) / 1e9
 		}
 
 		isSpot := node.Labels["cloud.google.com/gke-spot"] == "true"
 
 		if vcpu == 0 || memGB == 0 {
-			log.Printf("Warning: node %q has zero allocatable resources (vCPU=%.2f, memGB=%.2f); pods on this node will show $0 cost", node.Name, vcpu, memGB)
+			log.Printf("Warning: node %q has zero capacity resources (vCPU=%.2f, memGB=%.2f); pods on this node will show $0 cost", node.Name, vcpu, memGB)
 		}
 
 		nodes = append(nodes, NodeInfo{
@@ -95,6 +100,18 @@ func (nl *NodeLister) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 		})
 	}
 	return nodes, nil
+}
+
+// nodeQuantity returns the named resource from node Capacity, falling back to
+// Allocatable when Capacity does not list it.
+func nodeQuantity(status corev1.NodeStatus, name corev1.ResourceName) (resource.Quantity, bool) {
+	if q, ok := status.Capacity[name]; ok {
+		return q, true
+	}
+	if q, ok := status.Allocatable[name]; ok {
+		return q, true
+	}
+	return resource.Quantity{}, false
 }
 
 // parseMachineFamily extracts the machine family from a GCE machine type string.
