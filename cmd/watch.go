@@ -94,7 +94,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		trendCfg = &cfg
 	}
 
-	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg)
+	_, postFilterNS := listNamespace()
+	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg, postFilterNS)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

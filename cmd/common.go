@@ -70,10 +70,23 @@ func clusterMode() kube.ClusterMode {
 	}
 }
 
+// listNamespace decides where the --namespace filter is applied. Standard-mode
+// cost attribution divides each node's cost by the total requests of the pods
+// on it, so the API listing must stay cluster-wide and the namespace filter is
+// applied to pod costs after calculation. Autopilot costs are per-pod, so
+// API-side filtering is safe and cheaper there.
+func listNamespace() (apiNS, postFilterNS string) {
+	if namespace != "" && needsStandard() {
+		return "", namespace
+	}
+	return namespace, ""
+}
+
 func newPodLister() (*kube.PodLister, error) {
 	var opts []kube.PodListerOption
-	if namespace != "" {
-		opts = append(opts, kube.WithNamespace(namespace))
+	apiNS, _ := listNamespace()
+	if apiNS != "" {
+		opts = append(opts, kube.WithNamespace(apiNS))
 	}
 	if len(excludeNamespaces) > 0 {
 		opts = append(opts, kube.WithExcludeNamespaces(excludeNamespaces))

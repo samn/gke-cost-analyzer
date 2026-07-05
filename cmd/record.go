@@ -124,10 +124,12 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 
 	lc := labelConfig()
 	intervalSecs := int64(recordInterval.Seconds())
+	_, postFilterNS := listNamespace()
 	sc := snapshotConfig{
-		projectID:   project,
-		region:      region,
-		clusterName: clusterName,
+		projectID:       project,
+		region:          region,
+		clusterName:     clusterName,
+		filterNamespace: postFilterNS,
 	}
 
 	ticker := time.NewTicker(recordInterval)
@@ -156,6 +158,9 @@ type snapshotConfig struct {
 	projectID   string
 	region      string
 	clusterName string
+	// filterNamespace narrows recorded groups to one namespace after cost
+	// calculation (so standard-mode share denominators use the full pod set).
+	filterNamespace string
 }
 
 func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister *kube.NodeLister, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
@@ -189,6 +194,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 
 	// Calculate costs — partition pods by type if both calculators are set
 	allCosts := cost.PartitionAndCalculate(pods, autopilotCalc, standardCalc)
+	allCosts = cost.FilterByNamespace(allCosts, sc.filterNamespace)
 
 	aggs := cost.AggregateWithUtilization(allCosts, lc, usage)
 
@@ -203,7 +209,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 				return fmt.Errorf("writing to parquet: %w", err)
 			}
 			fmt.Printf("[%s] Appended %d records (%d pods) to %s\n",
-				now.Format("15:04:05"), len(snapshots), len(pods), parquetFile)
+				now.Format("15:04:05"), len(snapshots), len(allCosts), parquetFile)
 		} else {
 			for _, s := range snapshots {
 				data, err := json.Marshal(s)
@@ -213,7 +219,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 				fmt.Println(string(data))
 			}
 			fmt.Printf("[%s] Would write %d records (%d pods)\n",
-				now.Format("15:04:05"), len(snapshots), len(pods))
+				now.Format("15:04:05"), len(snapshots), len(allCosts))
 		}
 		return nil
 	}
@@ -223,7 +229,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 	}
 
 	fmt.Printf("[%s] Wrote %d records (%d pods)\n",
-		now.Format("15:04:05"), len(snapshots), len(pods))
+		now.Format("15:04:05"), len(snapshots), len(allCosts))
 	return nil
 }
 

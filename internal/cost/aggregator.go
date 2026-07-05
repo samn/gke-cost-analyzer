@@ -153,6 +153,23 @@ func computeEfficiency(cpuUtil, memUtil, cpuCostPerHour, memCostPerHour, totalCo
 	return (cpuCapped*cpuCostPerHour + memCapped*memCostPerHour) / totalCostPerHour
 }
 
+// FilterByNamespace returns only the pod costs whose pod is in namespace ns.
+// An empty ns returns the input unchanged. Use this to narrow display to one
+// namespace AFTER cost calculation, so that standard-mode per-node share
+// denominators were computed from the full pod set.
+func FilterByNamespace(costs []PodCost, ns string) []PodCost {
+	if ns == "" {
+		return costs
+	}
+	filtered := make([]PodCost, 0, len(costs))
+	for _, pc := range costs {
+		if pc.Pod.Namespace == ns {
+			filtered = append(filtered, pc)
+		}
+	}
+	return filtered
+}
+
 func labelValue(labels map[string]string, key string) string {
 	if key == "" || labels == nil {
 		return ""

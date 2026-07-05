@@ -35,7 +35,7 @@ func testModel(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil, "")
 }
 
 func TestModelInitialView(t *testing.T) {
@@ -312,7 +312,7 @@ func testModelWithSubtype(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app", SubtypeLabel: "subtype"}
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil, "")
 }
 
 func TestModelHelpTextWithSubtype(t *testing.T) {
@@ -409,7 +409,7 @@ func testModelWithPrometheusProject(lister PodLister, promURL string, promProjec
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	client := prometheus.NewClient(promURL)
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, client, promProject, false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, client, promProject, false, nil, "")
 }
 
 func TestModelShowUtilizationWhenPromClientSet(t *testing.T) {

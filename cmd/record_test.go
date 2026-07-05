@@ -885,3 +885,101 @@ func TestRecordSnapshotParquetAppends(t *testing.T) {
 		t.Fatalf("expected 2 rows after two appends, got %d", len(got))
 	}
 }
+
+func TestListNamespace(t *testing.T) {
+	savedMode := mode
+	savedNS := namespace
+	defer func() { mode = savedMode; namespace = savedNS }()
+
+	// Standard-mode attribution needs the full pod set per node, so the API
+	// listing must be cluster-wide and the namespace applied post-calculation.
+	mode = "all"
+	namespace = "team-ns"
+	apiNS, postNS := listNamespace()
+	if apiNS != "" || postNS != "team-ns" {
+		t.Errorf("mode=all ns=team-ns: got api=%q post=%q, want api=\"\" post=\"team-ns\"", apiNS, postNS)
+	}
+
+	mode = "standard"
+	apiNS, postNS = listNamespace()
+	if apiNS != "" || postNS != "team-ns" {
+		t.Errorf("mode=standard ns=team-ns: got api=%q post=%q, want api=\"\" post=\"team-ns\"", apiNS, postNS)
+	}
+
+	// Autopilot costs are per-pod, so API-side filtering is safe and cheaper.
+	mode = "autopilot"
+	apiNS, postNS = listNamespace()
+	if apiNS != "team-ns" || postNS != "" {
+		t.Errorf("mode=autopilot ns=team-ns: got api=%q post=%q, want api=\"team-ns\" post=\"\"", apiNS, postNS)
+	}
+
+	// No namespace flag: no filtering anywhere.
+	mode = "all"
+	namespace = ""
+	apiNS, postNS = listNamespace()
+	if apiNS != "" || postNS != "" {
+		t.Errorf("no ns: got api=%q post=%q, want empty", apiNS, postNS)
+	}
+}
+
+func TestRecordSnapshotNamespaceFilterPreservesShares(t *testing.T) {
+	// A --namespace filter must not inflate standard-mode cost shares: the
+	// share denominator comes from ALL pods on the node, and filtering to the
+	// target namespace happens after cost calculation.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	lister := &mockPodLister{
+		pods: []kube.PodInfo{
+			// Cluster-wide listing returns pods from both namespaces.
+			kube.NewTestPodInfoOnNode("target-pod", "target", 1000, 4000, startTime, false,
+				map[string]string{"team": "a", "app": "w1"}, "gke-node-1"),
+			kube.NewTestPodInfoOnNode("other-pod", "other", 3000, 12000, startTime, false,
+				map[string]string{"team": "b", "app": "w2"}, "gke-node-1"),
+		},
+	}
+
+	cpt := pricing.FromComputePrices([]pricing.ComputePrice{
+		{Region: "us-central1", MachineFamily: "n2", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.03},
+		{Region: "us-central1", MachineFamily: "n2", ResourceType: pricing.Memory, Tier: pricing.OnDemand, UnitPrice: 0.004},
+	})
+	stdCalc := cost.NewStandardCalculator("us-central1", cpt, func() time.Time { return now })
+	stdCalc.SetNodes([]kube.NodeInfo{{
+		Name: "gke-node-1", MachineFamily: "n2", VCPU: 4, MemoryGB: 16,
+	}})
+
+	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+	sc := snapshotConfig{
+		projectID: "proj", region: "us-central1", clusterName: "cluster",
+		filterNamespace: "target",
+	}
+
+	dir := t.TempDir()
+	pqFile := dir + "/ns-filter.parquet"
+
+	err := recordSnapshot(context.Background(), lister, nil, stdCalc, nil, lc, nil, nil, sc, 3600, pqFile)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, err := pqwriter.ReadFile(pqFile)
+	if err != nil {
+		t.Fatalf("reading parquet: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 row (target namespace only), got %d", len(got))
+	}
+	if got[0].Namespace != "target" {
+		t.Errorf("namespace = %s, want target", got[0].Namespace)
+	}
+
+	// Node cost/hr: cpu 4×0.03=0.12, mem 16×0.004=0.064.
+	// target-pod requests 1/4 of CPU (1 of 4 requested vCPU) and 1/4 of
+	// memory (4 of 16 requested GB): 0.25×0.12 + 0.25×0.064 = 0.046/hr.
+	// With a 3600s interval, total_cost = 0.046. If shares had been computed
+	// from the filtered set, the pod would absorb the whole 0.184/hr.
+	want := 0.25*0.12 + 0.25*0.064
+	if diff := got[0].TotalCost - want; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("total cost = %f, want %f (share from full pod set)", got[0].TotalCost, want)
+	}
+}

@@ -752,3 +752,26 @@ func TestAggregateWithUtilizationZeroCost(t *testing.T) {
 		t.Errorf("WastedCostPerHour = %f, want 0 for zero cost", agg.WastedCostPerHour)
 	}
 }
+
+func TestFilterByNamespace(t *testing.T) {
+	costs := []PodCost{
+		{Pod: kube.NewTestPodInfo("a", "target", 100, 100, time.Time{}, false, nil)},
+		{Pod: kube.NewTestPodInfo("b", "other", 100, 100, time.Time{}, false, nil)},
+		{Pod: kube.NewTestPodInfo("c", "target", 100, 100, time.Time{}, false, nil)},
+	}
+
+	got := FilterByNamespace(costs, "target")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 costs in target namespace, got %d", len(got))
+	}
+	for _, pc := range got {
+		if pc.Pod.Namespace != "target" {
+			t.Errorf("unexpected namespace %q", pc.Pod.Namespace)
+		}
+	}
+
+	// Empty filter is a no-op.
+	if got := FilterByNamespace(costs, ""); len(got) != 3 {
+		t.Errorf("empty filter should return all costs, got %d", len(got))
+	}
+}

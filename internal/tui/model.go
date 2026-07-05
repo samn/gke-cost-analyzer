@@ -79,16 +79,21 @@ type Model struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	promClient    *prometheus.Client
+	// nsFilter narrows displayed groups to one namespace after cost
+	// calculation (standard-mode share denominators need the full pod set).
+	nsFilter string
 }
 
 // NewModel creates a new TUI model. If trendCfg is non-nil, cost aberration
-// detection is enabled with the given configuration.
-func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister NodeLister, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string, showMode bool, trendCfg *trend.Config) Model {
+// detection is enabled with the given configuration. nsFilter, when non-empty,
+// narrows the displayed groups to one namespace after cost calculation.
+func NewModel(ctx context.Context, cancel context.CancelFunc, lister PodLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister NodeLister, lc cost.LabelConfig, interval time.Duration, promClient *prometheus.Client, promProject string, showMode bool, trendCfg *trend.Config, nsFilter string) Model {
 	var tracker *trend.Tracker
 	if trendCfg != nil {
 		tracker = trend.NewTracker(*trendCfg)
 	}
 	return Model{
+		nsFilter:        nsFilter,
 		lister:          lister,
 		autopilotCalc:   autopilotCalc,
 		standardCalc:    standardCalc,
@@ -334,12 +339,13 @@ func (m Model) fetchCosts() tea.Msg {
 
 	// Calculate costs — partition pods by type if both calculators are set
 	allCosts := cost.PartitionAndCalculate(pods, m.autopilotCalc, m.standardCalc)
+	allCosts = cost.FilterByNamespace(allCosts, m.nsFilter)
 
 	aggs := cost.AggregateWithUtilization(allCosts, m.lc, usage)
 
 	return costDataMsg{
 		aggs:         aggs,
-		podCount:     len(pods),
+		podCount:     len(allCosts),
 		promErr:      promErr,
 		utilPodCount: len(usage),
 	}
