@@ -1059,3 +1059,35 @@ func TestHelpTextAdvertisesReachableKeys(t *testing.T) {
 		t.Errorf("help should advertise '-' for Waste, got: %s", help)
 	}
 }
+
+func TestCursorClampedWhenRefreshShrinksTable(t *testing.T) {
+	// A periodic refresh can remove rows (workloads scaled to zero). If the
+	// cursor is past the new end it must be clamped, otherwise the selection
+	// highlight vanishes and navigation keys stop responding.
+	m := testModel(&mockPodLister{})
+
+	bigMsg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "a", Workload: "w1"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "b", Workload: "w2"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "c", Workload: "w3"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(bigMsg)
+	m = updated.(Model)
+
+	// Move cursor to the last row.
+	m.cursor = len(m.displayRows) - 1
+	if m.cursor < 1 {
+		t.Fatalf("expected multiple display rows, got %d", len(m.displayRows))
+	}
+
+	// Refresh with a single remaining workload.
+	smallMsg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "a", Workload: "w1"}, PodCount: 1},
+	}}
+	updated, _ = m.Update(smallMsg)
+	m = updated.(Model)
+
+	if m.cursor >= len(m.displayRows) {
+		t.Errorf("cursor %d out of bounds after refresh (rows=%d)", m.cursor, len(m.displayRows))
+	}
+}

@@ -183,6 +183,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tracker.Update(m.aggs, m.lastUpdate)
 		}
 		m.rebuildDisplay()
+		m.clampCursor()
 		return m, m.scheduleTick
 
 	case errMsg:
