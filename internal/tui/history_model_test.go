@@ -247,20 +247,20 @@ func TestHistoryModelSparklines(t *testing.T) {
 	m := testHistoryModel(&mockFetcher{})
 
 	key := bigquery.WorkloadKey{Team: "platform", Workload: "web"}
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	series := make([]bigquery.TimeSeriesPoint, 8)
+	for i := range series {
+		series[i] = bigquery.TimeSeriesPoint{
+			Key:        key,
+			Bucket:     base.Add(time.Duration(i) * time.Hour),
+			BucketCost: float64(i),
+		}
+	}
 	msg := historyDataMsg{
 		rows: []bigquery.HistoryCostRow{
 			{Team: "platform", Workload: "web", TotalCost: 10},
 		},
-		series: []bigquery.TimeSeriesPoint{
-			{Key: key, BucketCost: 0},
-			{Key: key, BucketCost: 1},
-			{Key: key, BucketCost: 2},
-			{Key: key, BucketCost: 3},
-			{Key: key, BucketCost: 4},
-			{Key: key, BucketCost: 5},
-			{Key: key, BucketCost: 6},
-			{Key: key, BucketCost: 7},
-		},
+		series: series,
 	}
 
 	updated, _ := m.Update(msg)
