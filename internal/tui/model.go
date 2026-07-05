@@ -129,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			m.cancel()
 			return m, tea.Quit
-		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=":
 			key := rune(msg.String()[0])
 			if col, ok := ColumnForKey(key, m.showSubtype, m.showUtilization, m.showMode); ok {
 				if col == m.sortCfg.Column {
@@ -366,11 +366,9 @@ func (m Model) helpText() string {
 		if name == "" {
 			name = d.header
 		}
-		key := keyIdx + 1
-		if key == 10 {
-			key = 0
+		if key, ok := sortKeyForIndex(keyIdx); ok {
+			help += fmt.Sprintf(" %c=%s", key, name)
 		}
-		help += fmt.Sprintf(" %d=%s", key, name)
 		keyIdx++
 	}
 	help += " · ↑↓=Navigate"

@@ -1042,3 +1042,20 @@ func TestModelExpandSpaceKey(t *testing.T) {
 		t.Error("space key should expand team")
 	}
 }
+
+func TestHelpTextAdvertisesReachableKeys(t *testing.T) {
+	// With 11 sortable columns the last one is reached via '-'; the footer
+	// must never advertise a nonexistent key like "11=".
+	m := testModel(&mockPodLister{})
+	m.showSubtype = true
+	m.showMode = true
+	m.showUtilization = true
+
+	help := m.helpText()
+	if strings.Contains(help, "11=") {
+		t.Errorf("help advertises nonexistent key 11: %s", help)
+	}
+	if !strings.Contains(help, "-=Waste") {
+		t.Errorf("help should advertise '-' for Waste, got: %s", help)
+	}
+}

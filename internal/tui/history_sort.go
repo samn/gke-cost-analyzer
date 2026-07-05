@@ -188,7 +188,7 @@ func SortHistoryTeamGroups(groups []HistoryTeamGroup, cfg HistorySortConfig) {
 	}
 }
 
-// HistoryColumnForKey maps a number key press to a history sort column.
+// HistoryColumnForKey maps a sort key press to a history sort column.
 func HistoryColumnForKey(key rune, vis ColumnVisibility) (HistSortColumn, bool) {
 	defs := historyVisibleColumns(vis)
 
@@ -199,11 +199,8 @@ func HistoryColumnForKey(key rune, vis ColumnVisibility) (HistSortColumn, bool) 
 		}
 	}
 
-	idx := int(key-'1') % 10
-	if key == '0' {
-		idx = 9
-	}
-	if idx < 0 || idx >= len(cols) {
+	idx, ok := sortKeyIndex(key)
+	if !ok || idx >= len(cols) {
 		return 0, false
 	}
 	return cols[idx], true

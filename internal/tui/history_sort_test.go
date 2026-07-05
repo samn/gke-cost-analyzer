@@ -218,3 +218,17 @@ func TestHistoryVisibleColumnsWithUtilization(t *testing.T) {
 		t.Errorf("utilization columns = %s %s %s", last3[0].header, last3[1].header, last3[2].header)
 	}
 }
+
+func TestHistoryColumnForKeyOverflowColumns(t *testing.T) {
+	vis := ColumnVisibility{Cluster: true, Subtype: true, Mode: true, Utilization: true}
+	col, ok := HistoryColumnForKey('-', vis)
+	if !ok {
+		t.Fatal("'-' should map to the 11th sortable history column")
+	}
+	if col != HistSortByWaste {
+		t.Errorf("'-' mapped to %v, want HistSortByWaste", col)
+	}
+	if _, ok := HistoryColumnForKey('=', vis); ok {
+		t.Error("'=' should not map to any column with 11 sortable columns")
+	}
+}

@@ -389,3 +389,25 @@ func TestColumnForKeyWithoutSubtype(t *testing.T) {
 		t.Error("key 8 should be invalid without subtype")
 	}
 }
+
+func TestColumnForKeyOverflowColumns(t *testing.T) {
+	// With subtype + mode + utilization all enabled there are 11 sortable
+	// columns but only 10 number keys; the overflow continues on '-' and '='.
+	col, ok := ColumnForKey('-', true, true, true)
+	if !ok {
+		t.Fatal("'-' should map to the 11th sortable column")
+	}
+	if col != SortByWaste {
+		t.Errorf("'-' mapped to %v, want SortByWaste", col)
+	}
+
+	// '=' would be the 12th sortable column, which doesn't exist.
+	if _, ok := ColumnForKey('=', true, true, true); ok {
+		t.Error("'=' should not map to any column with 11 sortable columns")
+	}
+
+	// Overflow keys do nothing when fewer columns are visible.
+	if _, ok := ColumnForKey('-', false, false, false); ok {
+		t.Error("'-' should not map to a column with only 7 sortable columns")
+	}
+}
