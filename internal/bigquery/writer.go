@@ -3,6 +3,8 @@ package bigquery
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -82,7 +84,7 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 	rows := make([]insertRow, len(snapshots))
 	for i, s := range snapshots {
 		rows[i] = insertRow{
-			InsertID: fmt.Sprintf("%s-%s-%s-%s-%s-%s-%t-%s-%d", s.ProjectID, s.ClusterName, s.Namespace, s.Team, s.Workload, s.Subtype, s.IsSpot, s.CostMode, s.Timestamp.UnixNano()),
+			InsertID: insertID(s),
 			JSON:     snapshotToRow(s),
 		}
 	}
@@ -129,6 +131,23 @@ func (w *Writer) Write(ctx context.Context, snapshots []CostSnapshot) error {
 	}
 
 	return nil
+}
+
+// insertID derives a deterministic, collision-free dedup ID for a snapshot.
+// The identity fields are JSON-encoded (unambiguous even when label values
+// contain delimiter characters) and hashed, keeping the ID well under
+// BigQuery's 128-byte insertId limit regardless of label lengths.
+func insertID(s CostSnapshot) string {
+	key, err := json.Marshal([]any{
+		s.ProjectID, s.ClusterName, s.Namespace, s.Team, s.Workload,
+		s.Subtype, s.IsSpot, s.CostMode, s.Timestamp.UnixNano(),
+	})
+	if err != nil {
+		// Marshaling strings/bools/ints cannot fail; guard anyway.
+		key = []byte(fmt.Sprintf("%+v", s))
+	}
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])
 }
 
 func snapshotToRow(s CostSnapshot) map[string]any {
