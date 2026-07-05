@@ -775,3 +775,31 @@ func TestFilterByNamespace(t *testing.T) {
 		t.Errorf("empty filter should return all costs, got %d", len(got))
 	}
 }
+
+func TestAggregateDeterministicOrder(t *testing.T) {
+	// Aggregate output order must not depend on map iteration: Parquet row
+	// order and any snapshot-style consumer would otherwise be flaky.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	var pods []kube.PodInfo
+	for _, team := range []string{"zeta", "alpha", "mid"} {
+		pods = append(pods, kube.NewTestPodInfo("p-"+team, "ns", 100, 100, startTime, false,
+			map[string]string{"team": team, "app": "w"}))
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+	})
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+
+	first := Aggregate(calc.CalculateAll(pods), lc)
+	teams := make([]string, len(first))
+	for i, a := range first {
+		teams[i] = a.Key.Team
+	}
+	if teams[0] != "alpha" || teams[1] != "mid" || teams[2] != "zeta" {
+		t.Errorf("output not sorted by key: %v", teams)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -147,7 +148,7 @@ func (c *Client) instantQuery(ctx context.Context, query, nsLabel, podLabel stri
 	if err != nil {
 		return nil, fmt.Errorf("parsing base URL: %w", err)
 	}
-	u.Path += "/api/v1/query"
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/v1/query"
 	params := url.Values{"query": {query}}
 	u.RawQuery = params.Encode()
 

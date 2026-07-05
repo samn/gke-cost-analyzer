@@ -1,6 +1,8 @@
 package cost
 
 import (
+	"sort"
+
 	"github.com/samn/gke-cost-analyzer/internal/prometheus"
 )
 
@@ -116,8 +118,17 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 		}
 	}
 
+	// Deterministic output order: map iteration would make Parquet row
+	// order (and any snapshot-style consumer) flaky.
+	keys := make([]GroupKey, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return lessGroupKey(keys[i], keys[j]) })
+
 	result := make([]AggregatedCost, 0, len(groups))
-	for _, ga := range groups {
+	for _, key := range keys {
+		ga := groups[key]
 		if ga.hasUsage {
 			ga.agg.HasUtilization = true
 			// Only pods with Prometheus data contribute to the utilization
@@ -151,6 +162,27 @@ func computeEfficiency(cpuUtil, memUtil, cpuCostPerHour, memCostPerHour, totalCo
 	cpuCapped := min(cpuUtil, 1.0)
 	memCapped := min(memUtil, 1.0)
 	return (cpuCapped*cpuCostPerHour + memCapped*memCostPerHour) / totalCostPerHour
+}
+
+// lessGroupKey orders GroupKeys by namespace, team, workload, subtype,
+// cost mode, then spot status.
+func lessGroupKey(a, b GroupKey) bool {
+	if a.Namespace != b.Namespace {
+		return a.Namespace < b.Namespace
+	}
+	if a.Team != b.Team {
+		return a.Team < b.Team
+	}
+	if a.Workload != b.Workload {
+		return a.Workload < b.Workload
+	}
+	if a.Subtype != b.Subtype {
+		return a.Subtype < b.Subtype
+	}
+	if a.CostMode != b.CostMode {
+		return a.CostMode < b.CostMode
+	}
+	return !a.IsSpot && b.IsSpot
 }
 
 // FilterByNamespace returns only the pod costs whose pod is in namespace ns.
