@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- Upgraded the Go toolchain to 1.26.4 (`mise.toml`, `mise.lock`, and the `go.mod` `go` directive).
+- Updated Go module dependencies to their latest releases, including `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` v0.35.3 → v0.36.2, `charm.land/bubbletea/v2` v2.0.2 → v2.0.8, `charm.land/lipgloss/v2` v2.0.2 → v2.0.5, `github.com/getsentry/sentry-go` v0.44.1 → v0.47.0, `github.com/parquet-go/parquet-go` v0.29.0 → v0.30.1, and `golang.org/x/sync` v0.19.0 → v0.21.0.
 - **Namespace is now part of the aggregation group identity**: pods in different namespaces with identical labels are recorded as separate groups, and the `namespace` column is deterministic (previously it came from whichever pod was listed first). Both history queries now group by namespace so table rows and sparklines agree.
 - **Standard-mode node cost is based on `Capacity` instead of `Allocatable`**, matching what GCE actually bills. Standard-mode dollar figures increase accordingly (previously understated by up to ~20% on memory for small nodes).
 - Native sidecar containers (init containers with `restartPolicy: Always`) now count toward pod resource requests — Autopilot bills them and they consume node resources. Classic init containers remain excluded.

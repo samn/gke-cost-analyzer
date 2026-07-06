@@ -1,4 +1,4 @@
 [tools]
-go = "latest"
+go = "1.26.4"
 prek = "latest"
 golangci-lint = "latest"
