@@ -316,9 +316,9 @@ func TestAggregateEmptySlice(t *testing.T) {
 	}
 }
 
-func TestAggregateNamespaceFromFirstPod(t *testing.T) {
-	// When pods from different namespaces share the same labels,
-	// the aggregated group takes the namespace from the first pod seen.
+func TestAggregateNamespaceSeparatesGroups(t *testing.T) {
+	// Namespace is part of the group identity: pods from different namespaces
+	// with identical labels must aggregate into separate, deterministic groups.
 	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	startTime := now.Add(-1 * time.Hour)
 
@@ -326,6 +326,7 @@ func TestAggregateNamespaceFromFirstPod(t *testing.T) {
 	pods := []kube.PodInfo{
 		kube.NewTestPodInfo("web-1", "ns-a", 500, 512, startTime, false, labels),
 		kube.NewTestPodInfo("web-2", "ns-b", 500, 512, startTime, false, labels),
+		kube.NewTestPodInfo("web-3", "ns-b", 500, 512, startTime, false, labels),
 	}
 
 	pt := pricing.FromPrices([]pricing.Price{
@@ -339,16 +340,19 @@ func TestAggregateNamespaceFromFirstPod(t *testing.T) {
 	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	aggs := Aggregate(costs, lc)
 
-	if len(aggs) != 1 {
-		t.Fatalf("expected 1 group, got %d", len(aggs))
+	if len(aggs) != 2 {
+		t.Fatalf("expected 2 groups (one per namespace), got %d", len(aggs))
 	}
 
-	// Namespace comes from the first pod seen (ns-a)
-	if aggs[0].Namespace != "ns-a" {
-		t.Errorf("namespace = %s, want ns-a (from first pod)", aggs[0].Namespace)
+	counts := map[string]int{}
+	for _, a := range aggs {
+		counts[a.Key.Namespace] = a.PodCount
 	}
-	if aggs[0].PodCount != 2 {
-		t.Errorf("pod count = %d, want 2", aggs[0].PodCount)
+	if counts["ns-a"] != 1 {
+		t.Errorf("ns-a pod count = %d, want 1", counts["ns-a"])
+	}
+	if counts["ns-b"] != 2 {
+		t.Errorf("ns-b pod count = %d, want 2", counts["ns-b"])
 	}
 }
 
@@ -743,5 +747,56 @@ func TestAggregateWithUtilizationZeroCost(t *testing.T) {
 	}
 	if agg.WastedCostPerHour != 0 {
 		t.Errorf("WastedCostPerHour = %f, want 0 for zero cost", agg.WastedCostPerHour)
+	}
+}
+
+func TestFilterByNamespace(t *testing.T) {
+	costs := []PodCost{
+		{Pod: kube.NewTestPodInfo("a", "target", 100, 100, time.Time{}, false, nil)},
+		{Pod: kube.NewTestPodInfo("b", "other", 100, 100, time.Time{}, false, nil)},
+		{Pod: kube.NewTestPodInfo("c", "target", 100, 100, time.Time{}, false, nil)},
+	}
+
+	got := FilterByNamespace(costs, "target")
+	if len(got) != 2 {
+		t.Fatalf("expected 2 costs in target namespace, got %d", len(got))
+	}
+	for _, pc := range got {
+		if pc.Pod.Namespace != "target" {
+			t.Errorf("unexpected namespace %q", pc.Pod.Namespace)
+		}
+	}
+
+	// Empty filter is a no-op.
+	if got := FilterByNamespace(costs, ""); len(got) != 3 {
+		t.Errorf("empty filter should return all costs, got %d", len(got))
+	}
+}
+
+func TestAggregateDeterministicOrder(t *testing.T) {
+	// Aggregate output order must not depend on map iteration: Parquet row
+	// order and any snapshot-style consumer would otherwise be flaky.
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	var pods []kube.PodInfo
+	for _, team := range []string{"zeta", "alpha", "mid"} {
+		pods = append(pods, kube.NewTestPodInfo("p-"+team, "ns", 100, 100, startTime, false,
+			map[string]string{"team": team, "app": "w"}))
+	}
+
+	pt := pricing.FromPrices([]pricing.Price{
+		{Region: "us-central1", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.000035},
+	})
+	calc := NewCalculator("us-central1", pt, func() time.Time { return now })
+	lc := LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
+
+	first := Aggregate(calc.CalculateAll(pods), lc)
+	teams := make([]string, len(first))
+	for i, a := range first {
+		teams[i] = a.Key.Team
+	}
+	if teams[0] != "alpha" || teams[1] != "mid" || teams[2] != "zeta" {
+		t.Errorf("output not sorted by key: %v", teams)
 	}
 }

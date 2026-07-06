@@ -2,17 +2,57 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"syscall"
+	"time"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
 	"github.com/samn/gke-cost-analyzer/internal/kube"
 	"github.com/samn/gke-cost-analyzer/internal/pricing"
 	"github.com/samn/gke-cost-analyzer/internal/prometheus"
+	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
+
+// shutdownSignals are the signals that trigger graceful shutdown. SIGTERM is
+// what Kubernetes (and Docker) send on pod termination; SIGINT covers Ctrl-C.
+var shutdownSignals = []os.Signal{os.Interrupt, syscall.SIGTERM}
+
+// usageError marks operator input mistakes (missing/invalid flags or
+// arguments) so main() can skip reporting them to Sentry.
+type usageError struct{ error }
+
+// usageErrorf builds a usage-classified error.
+func usageErrorf(format string, args ...any) error {
+	return usageError{fmt.Errorf(format, args...)}
+}
+
+// IsUsageError reports whether err is an operator input mistake rather than
+// an application failure.
+func IsUsageError(err error) bool {
+	var ue usageError
+	return errors.As(err, &ue)
+}
+
+// usageArgs wraps a cobra positional-args validator so its failures (e.g.
+// a missing argument) classify as usage errors rather than being reported
+// to Sentry as application errors.
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
+}
+
+// gcpHTTPTimeout bounds each GCP API request so a hung backend cannot wedge
+// a daemon loop indefinitely.
+const gcpHTTPTimeout = 30 * time.Second
 
 // podLister is an interface for listing pods, enabling testing without a real cluster.
 type podLister interface {
@@ -70,10 +110,26 @@ func clusterMode() kube.ClusterMode {
 	}
 }
 
-func newPodLister() (*kube.PodLister, error) {
+// listNamespace decides where the --namespace filter is applied. Standard-mode
+// cost attribution divides each node's cost by the total requests of the pods
+// on it, so the API listing must stay cluster-wide and the namespace filter is
+// applied to pod costs after calculation. Autopilot costs are per-pod, so
+// API-side filtering is safe and cheaper there.
+func listNamespace() (apiNS, postFilterNS string) {
+	if namespace != "" && needsStandard() {
+		return "", namespace
+	}
+	return namespace, ""
+}
+
+// newPodLister builds a pod lister restricted to apiNS at the Kubernetes API
+// level (empty = cluster-wide). Cost-computing commands must pass the apiNS
+// from listNamespace(); commands that don't compute costs (unmatched-pods)
+// can filter API-side unconditionally.
+func newPodLister(apiNS string) (*kube.PodLister, error) {
 	var opts []kube.PodListerOption
-	if namespace != "" {
-		opts = append(opts, kube.WithNamespace(namespace))
+	if apiNS != "" {
+		opts = append(opts, kube.WithNamespace(apiNS))
 	}
 	if len(excludeNamespaces) > 0 {
 		opts = append(opts, kube.WithExcludeNamespaces(excludeNamespaces))
@@ -133,7 +189,9 @@ func defaultGCPHTTPClient(ctx context.Context, scopes ...string) (*http.Client, 
 	if err != nil {
 		return nil, fmt.Errorf("getting default credentials: %w", err)
 	}
-	return oauth2.NewClient(ctx, ts), nil
+	client := oauth2.NewClient(ctx, ts)
+	client.Timeout = gcpHTTPTimeout
+	return client, nil
 }
 
 // newPromClient creates a Prometheus client based on the configuration:

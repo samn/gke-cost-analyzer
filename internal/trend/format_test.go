@@ -126,3 +126,26 @@ func TestFormatEvent_NoTeam(t *testing.T) {
 		t.Errorf("should not have team prefix when team is empty: %s", got)
 	}
 }
+
+func TestFormatTimeAgoDays(t *testing.T) {
+	now := time.Now()
+	got := FormatTimeAgo(now.Add(-48*time.Hour), now)
+	if got != "2d ago" {
+		t.Errorf("FormatTimeAgo(48h) = %q, want \"2d ago\"", got)
+	}
+}
+
+func TestFormatEventZeroPctChange(t *testing.T) {
+	// A change rounding to zero must not print a misleading "+0%".
+	e := Event{
+		Kind:      EventAberration,
+		Key:       cost.GroupKey{Team: "t", Workload: "w"},
+		PrevCost:  1.0,
+		NewCost:   1.0,
+		PctChange: 0,
+	}
+	got := FormatEvent(e, time.Now())
+	if strings.Contains(got, "+0%") || strings.Contains(got, "-0%") {
+		t.Errorf("zero change formatted with sign: %q", got)
+	}
+}

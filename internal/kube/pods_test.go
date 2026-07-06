@@ -574,6 +574,64 @@ func TestExtractPodInfoInitContainersNotCounted(t *testing.T) {
 	}
 }
 
+func TestExtractPodInfoNativeSidecarsCounted(t *testing.T) {
+	// Native sidecars (init containers with restartPolicy: Always) run for the
+	// pod's entire lifetime, consume node resources, and are billed by
+	// Autopilot — their requests must be included. Classic init containers
+	// (no restart policy) stay excluded.
+	always := corev1.ContainerRestartPolicyAlways
+	startTime := metav1.NewTime(time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "with-sidecar", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{
+				{
+					Name: "classic-init",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("2"),
+							corev1.ResourceMemory: resource.MustParse("2Gi"),
+						},
+					},
+				},
+				{
+					Name:          "sidecar",
+					RestartPolicy: &always,
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("250m"),
+							corev1.ResourceMemory: resource.MustParse("128Mi"),
+						},
+					},
+				},
+			},
+			Containers: []corev1.Container{
+				{
+					Name: "main",
+					Resources: corev1.ResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceCPU:    resource.MustParse("500m"),
+							corev1.ResourceMemory: resource.MustParse("256Mi"),
+						},
+					},
+				},
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, StartTime: &startTime},
+	}
+
+	info := extractPodInfo(pod)
+	// main (500m) + sidecar (250m); classic init (2000m) excluded
+	if info.CPURequestMilli != 750 {
+		t.Errorf("CPU milli = %d, want 750 (main + native sidecar)", info.CPURequestMilli)
+	}
+	// main (256Mi) + sidecar (128Mi)
+	expectedMemBytes := int64((256 + 128) * 1024 * 1024)
+	if info.MemRequestBytes != expectedMemBytes {
+		t.Errorf("mem bytes = %d, want %d (main + native sidecar)", info.MemRequestBytes, expectedMemBytes)
+	}
+}
+
 func TestExtractPodInfoMemoryUnitConversion(t *testing.T) {
 	// Verify the Kubernetes binary units (Mi, Gi) are correctly converted to
 	// SI GB (10^9 bytes) for billing purposes.

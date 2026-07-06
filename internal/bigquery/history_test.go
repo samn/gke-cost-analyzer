@@ -11,11 +11,17 @@ func TestKeyFromRow(t *testing.T) {
 		Team:        "platform",
 		Workload:    "web",
 		Subtype:     "api",
+		Namespace:   "default",
 		CostMode:    "autopilot",
 	}
 	key := KeyFromRow(row)
 	if key.ClusterName != "prod-cluster" || key.Team != "platform" || key.Workload != "web" || key.Subtype != "api" || key.CostMode != "autopilot" {
 		t.Errorf("KeyFromRow mismatch: %+v", key)
+	}
+	// Namespace is part of the workload identity so that aggregated rows and
+	// sparkline time-series join on the same key.
+	if key.Namespace != "default" {
+		t.Errorf("KeyFromRow namespace = %q, want default", key.Namespace)
 	}
 }
 
@@ -73,7 +79,7 @@ func TestBuildSparklines(t *testing.T) {
 		{Key: k2, Bucket: now, BucketCost: 10.0},
 	}
 
-	result := BuildSparklines(points)
+	result := BuildSparklinesWithGaps(points, 3600)
 
 	if len(result) != 2 {
 		t.Fatalf("expected 2 keys, got %d", len(result))
@@ -90,5 +96,48 @@ func TestBuildSparklines(t *testing.T) {
 	k2Data := result[k2]
 	if len(k2Data) != 1 || k2Data[0] != 10.0 {
 		t.Errorf("k2 data = %v, want [10]", k2Data)
+	}
+}
+
+func TestBuildSparklinesFillsGaps(t *testing.T) {
+	// A workload that recorded nothing in some buckets (scaled to zero, or
+	// simply absent) must render those buckets as zero cost — omitting them
+	// compresses time and fakes a smooth trend.
+	k := WorkloadKey{Team: "a", Workload: "svc"}
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	bucketSecs := int64(3600)
+
+	points := []TimeSeriesPoint{
+		{Key: k, Bucket: base, BucketCost: 1.0},
+		// two missing buckets (13:00, 14:00)
+		{Key: k, Bucket: base.Add(3 * time.Hour), BucketCost: 4.0},
+	}
+
+	result := BuildSparklinesWithGaps(points, bucketSecs)
+	data := result[k]
+	want := []float64{1.0, 0, 0, 4.0}
+	if len(data) != len(want) {
+		t.Fatalf("expected %d buckets (gaps zero-filled), got %v", len(want), data)
+	}
+	for i := range want {
+		if data[i] != want[i] {
+			t.Errorf("bucket %d = %f, want %f", i, data[i], want[i])
+		}
+	}
+}
+
+func TestBuildSparklinesWithGapsUnsortedInput(t *testing.T) {
+	// Bucket order must come from the bucket timestamps, not input order.
+	k := WorkloadKey{Team: "a", Workload: "svc"}
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+
+	points := []TimeSeriesPoint{
+		{Key: k, Bucket: base.Add(time.Hour), BucketCost: 2.0},
+		{Key: k, Bucket: base, BucketCost: 1.0},
+	}
+
+	data := BuildSparklinesWithGaps(points, 3600)[k]
+	if len(data) != 2 || data[0] != 1.0 || data[1] != 2.0 {
+		t.Errorf("data = %v, want [1 2]", data)
 	}
 }

@@ -18,12 +18,17 @@ func FormatEvent(e Event, now time.Time) string {
 
 	switch e.Kind {
 	case EventAberration:
-		dir := "+"
-		if e.PctChange < 0 {
-			dir = ""
+		// %.0f rounds; only sign a change that displays as non-zero.
+		dir := ""
+		if e.PctChange >= 0.5 {
+			dir = "+"
+		}
+		pct := e.PctChange
+		if pct > -0.5 && pct < 0.5 {
+			pct = 0
 		}
 		return fmt.Sprintf("%-8s %-30s cost %s%.0f%% ($%.4f -> $%.4f)",
-			ago, workload, dir, e.PctChange, e.PrevCost, e.NewCost)
+			ago, workload, dir, pct, e.PrevCost, e.NewCost)
 	case EventAppeared:
 		return fmt.Sprintf("%-8s %-30s appeared ($%.4f/hr)", ago, workload, e.NewCost)
 	case EventDisappeared:
@@ -47,7 +52,9 @@ func FormatTimeAgo(t time.Time, now time.Time) string {
 		return fmt.Sprintf("%ds ago", int(d.Seconds()))
 	case d < time.Hour:
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
-	default:
+	case d < 24*time.Hour:
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }

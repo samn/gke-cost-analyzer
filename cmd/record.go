@@ -45,22 +45,22 @@ var recordCmd = &cobra.Command{
 
 func runRecord(cmd *cobra.Command, _ []string) error {
 	if region == "" {
-		return fmt.Errorf("--region is required")
+		return usageErrorf("--region is required")
 	}
 	if project == "" {
-		return fmt.Errorf("--project is required")
+		return usageErrorf("--project is required")
 	}
 	if clusterName == "" {
-		return fmt.Errorf("--cluster-name is required")
+		return usageErrorf("--cluster-name is required")
 	}
 	if recordInterval <= 0 {
-		return fmt.Errorf("--interval must be positive")
+		return usageErrorf("--interval must be positive")
 	}
 	if outputFile != "" && !dryRun {
-		return fmt.Errorf("--output-file requires --dry-run")
+		return usageErrorf("--output-file requires --dry-run")
 	}
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	var autopilotCalc *cost.Calculator
@@ -93,7 +93,8 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
-	lister, err := newPodLister()
+	apiNS, _ := listNamespace()
+	lister, err := newPodLister(apiNS)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
@@ -123,20 +124,54 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 
 	lc := labelConfig()
-	intervalSecs := int64(recordInterval.Seconds())
+	_, postFilterNS := listNamespace()
 	sc := snapshotConfig{
-		projectID:   project,
-		region:      region,
-		clusterName: clusterName,
+		projectID:       project,
+		region:          region,
+		clusterName:     clusterName,
+		filterNamespace: postFilterNS,
 	}
 
 	ticker := time.NewTicker(recordInterval)
 	defer ticker.Stop()
 
-	// Run once immediately
-	if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	// takeSnapshot bounds each snapshot so a hung backend can't wedge the
+	// loop, records cost over the actual elapsed time since the last
+	// successful snapshot, and refreshes prices when the cache TTL lapses
+	// (a long-running daemon should not use launch-time prices forever).
+	var lastSnapshot time.Time
+	pricesLoadedAt := time.Now()
+	takeSnapshot := func() {
+		if time.Since(pricesLoadedAt) > pricing.DefaultCacheTTL {
+			// Bound the refresh too: the paginated catalog fetch must not
+			// stall the loop indefinitely on a degraded billing API.
+			refreshCtx, cancelRefresh := context.WithTimeout(ctx, priceRefreshTimeout)
+			ap, std, err := refreshPrices(refreshCtx, autopilotCalc, standardCalc)
+			cancelRefresh()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: refreshing prices failed, keeping previous prices: %v\n", err)
+			} else {
+				autopilotCalc, standardCalc = ap, std
+			}
+			// Even on failure, wait a full TTL before retrying to avoid
+			// hammering the billing API every tick.
+			pricesLoadedAt = time.Now()
+		}
+
+		now := time.Now()
+		intervalSecs := snapshotIntervalSecs(lastSnapshot, now, recordInterval)
+		snapCtx, cancelSnap := context.WithTimeout(ctx, snapshotTimeout(recordInterval))
+		err := recordSnapshot(snapCtx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile)
+		cancelSnap()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
+			return
+		}
+		lastSnapshot = now
 	}
+
+	// Run once immediately
+	takeSnapshot()
 
 	for {
 		select {
@@ -144,11 +179,59 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 			fmt.Println("\nStopped.")
 			return nil
 		case <-ticker.C:
-			if err := recordSnapshot(ctx, lister, autopilotCalc, standardCalc, nodeLister, lc, writer, promClient, sc, intervalSecs, outputFile); err != nil {
-				fmt.Fprintf(os.Stderr, "Error recording snapshot: %v\n", err)
-			}
+			takeSnapshot()
 		}
 	}
+}
+
+// snapshotIntervalSecs returns the cost window for the next snapshot: the
+// actual elapsed time since the last successful snapshot, so missed or slow
+// ticks don't permanently undercount cost. The first snapshot (and any clock
+// anomaly) uses the nominal interval.
+func snapshotIntervalSecs(lastSnapshot, now time.Time, nominal time.Duration) int64 {
+	if lastSnapshot.IsZero() {
+		return int64(nominal.Seconds())
+	}
+	elapsed := now.Sub(lastSnapshot)
+	if elapsed <= 0 {
+		return int64(nominal.Seconds())
+	}
+	return int64(elapsed.Seconds())
+}
+
+// minSnapshotTimeout floors the per-snapshot deadline: with a short
+// --interval, a legitimately long snapshot (large cluster, slow backends)
+// must still be able to complete, or the daemon would cancel every attempt
+// and record nothing forever.
+const minSnapshotTimeout = 2 * time.Minute
+
+// priceRefreshTimeout bounds the daily paginated billing-catalog refetch.
+const priceRefreshTimeout = 10 * time.Minute
+
+// snapshotTimeout returns the deadline for one snapshot cycle.
+func snapshotTimeout(interval time.Duration) time.Duration {
+	return max(interval, minSnapshotTimeout)
+}
+
+// refreshPrices reloads pricing (via cache or API) and returns fresh
+// calculators for the ones that were active. On error the caller keeps its
+// existing calculators.
+func refreshPrices(ctx context.Context, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator) (*cost.Calculator, *cost.StandardCalculator, error) {
+	if autopilotCalc != nil {
+		prices, err := loadPrices(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		autopilotCalc = cost.NewCalculator(region, pricing.FromPrices(prices), nil)
+	}
+	if standardCalc != nil {
+		computePrices, err := loadComputePrices(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		standardCalc = cost.NewStandardCalculator(region, pricing.FromComputePrices(computePrices), nil)
+	}
+	return autopilotCalc, standardCalc, nil
 }
 
 // snapshotConfig holds the metadata needed to convert aggregated costs to BigQuery snapshots.
@@ -156,6 +239,9 @@ type snapshotConfig struct {
 	projectID   string
 	region      string
 	clusterName string
+	// filterNamespace narrows recorded groups to one namespace after cost
+	// calculation (so standard-mode share denominators use the full pod set).
+	filterNamespace string
 }
 
 func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.Calculator, standardCalc *cost.StandardCalculator, nodeLister *kube.NodeLister, lc cost.LabelConfig, writer *bigquery.Writer, promClient *prometheus.Client, sc snapshotConfig, intervalSecs int64, parquetFile string) error {
@@ -189,6 +275,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 
 	// Calculate costs — partition pods by type if both calculators are set
 	allCosts := cost.PartitionAndCalculate(pods, autopilotCalc, standardCalc)
+	allCosts = cost.FilterByNamespace(allCosts, sc.filterNamespace)
 
 	aggs := cost.AggregateWithUtilization(allCosts, lc, usage)
 
@@ -203,7 +290,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 				return fmt.Errorf("writing to parquet: %w", err)
 			}
 			fmt.Printf("[%s] Appended %d records (%d pods) to %s\n",
-				now.Format("15:04:05"), len(snapshots), len(pods), parquetFile)
+				now.Format("15:04:05"), len(snapshots), len(allCosts), parquetFile)
 		} else {
 			for _, s := range snapshots {
 				data, err := json.Marshal(s)
@@ -213,7 +300,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 				fmt.Println(string(data))
 			}
 			fmt.Printf("[%s] Would write %d records (%d pods)\n",
-				now.Format("15:04:05"), len(snapshots), len(pods))
+				now.Format("15:04:05"), len(snapshots), len(allCosts))
 		}
 		return nil
 	}
@@ -223,7 +310,7 @@ func recordSnapshot(ctx context.Context, lister podLister, autopilotCalc *cost.C
 	}
 
 	fmt.Printf("[%s] Wrote %d records (%d pods)\n",
-		now.Format("15:04:05"), len(snapshots), len(pods))
+		now.Format("15:04:05"), len(snapshots), len(allCosts))
 	return nil
 }
 
@@ -237,7 +324,7 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		ProjectID:       sc.projectID,
 		Region:          sc.region,
 		ClusterName:     sc.clusterName,
-		Namespace:       a.Namespace,
+		Namespace:       a.Key.Namespace,
 		Team:            a.Key.Team,
 		Workload:        a.Key.Workload,
 		Subtype:         a.Key.Subtype,

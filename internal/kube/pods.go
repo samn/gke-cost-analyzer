@@ -191,6 +191,21 @@ func extractPodInfo(pod *corev1.Pod) PodInfo {
 		}
 	}
 
+	// Native sidecars (init containers with restartPolicy: Always) run for the
+	// pod's whole lifetime and are billed like regular containers. Classic
+	// init containers only run before startup and are excluded.
+	for _, c := range pod.Spec.InitContainers {
+		if c.RestartPolicy == nil || *c.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+			continue
+		}
+		if req, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
+			cpuMilli += req.MilliValue()
+		}
+		if req, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+			memBytes += req.Value()
+		}
+	}
+
 	var startTime time.Time
 	if pod.Status.StartTime != nil {
 		startTime = pod.Status.StartTime.Time

@@ -113,8 +113,7 @@ func costModeShort(mode string) string {
 // displayRows are the pre-built rows (team summaries + expanded workload details).
 // cursor is the index of the currently selected display row (-1 for no selection).
 // aberrations maps GroupKeys to their active aberration events (may be nil).
-func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMode bool, sortCfg SortConfig, cursor int, aberrations map[cost.GroupKey]trend.Event) string {
-	vis := ColumnVisibility{Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
+func RenderTable(displayRows []DisplayRow, vis ColumnVisibility, sortCfg SortConfig, cursor int, aberrations map[cost.GroupKey]trend.Event) string {
 	defs := visibleColumns(vis)
 
 	rows := make([][]string, 0, len(displayRows)+2) // +2 for separator + total
@@ -145,10 +144,13 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 				dr.TeamName,
 				fmt.Sprintf("%d workloads %s", dr.WorkloadCount, arrow),
 			}
-			if showSubtype {
+			if vis.Namespace {
+				row = append(row, "") // namespace: mixed at team level
+			}
+			if vis.Subtype {
 				row = append(row, "")
 			}
-			if showMode {
+			if vis.Mode {
 				row = append(row, "")
 			}
 			a := dr.Agg
@@ -161,7 +163,7 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 				fmt.Sprintf("$%.4f", a.TotalCost),
 				"", // spot: mixed at team level
 			)
-			if showUtilization {
+			if vis.Utilization {
 				if a.HasUtilization {
 					row = append(row,
 						fmt.Sprintf("%.0f%%", a.CPUUtilization*100),
@@ -182,12 +184,12 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 
 		case rowWorkloadDetail:
 			ind := aberrationIndicator(aberrationRows, idx)
-			row = buildWorkloadRow(dr.Agg, "", showSubtype, showMode, showUtilization, ind)
+			row = buildWorkloadRow(dr.Agg, "", vis, ind)
 
 		case rowFlat:
 			a := dr.Agg
 			ind := aberrationIndicator(aberrationRows, idx)
-			row = buildWorkloadRow(a, orDefault(a.Key.Team, "-"), showSubtype, showMode, showUtilization, ind)
+			row = buildWorkloadRow(a, orDefault(a.Key.Team, "-"), vis, ind)
 			// Accumulate totals from flat rows.
 			totalPods += a.PodCount
 			totalCPU += a.TotalCPUVCPU
@@ -209,10 +211,13 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 
 	// Total row
 	totalRow := []string{"TOTAL", ""}
-	if showSubtype {
+	if vis.Namespace {
 		totalRow = append(totalRow, "")
 	}
-	if showMode {
+	if vis.Subtype {
+		totalRow = append(totalRow, "")
+	}
+	if vis.Mode {
 		totalRow = append(totalRow, "")
 	}
 	totalRow = append(totalRow,
@@ -223,7 +228,7 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 		fmt.Sprintf("$%.4f", totalCost),
 		"",
 	)
-	if showUtilization {
+	if vis.Utilization {
 		totalRow = append(totalRow, "", "",
 			fmt.Sprintf("$%.4f", totalWaste),
 		)
@@ -284,7 +289,7 @@ func RenderTable(displayRows []DisplayRow, showSubtype, showUtilization, showMod
 // buildWorkloadRow creates a table row for a single workload aggregate.
 // teamCol is the value for the TEAM column (empty string for nested workload details).
 // indicator is prepended to the $/HR cell (e.g., "▲ " or "▼ " for aberrations).
-func buildWorkloadRow(a cost.AggregatedCost, teamCol string, showSubtype, showMode, showUtilization bool, indicator string) []string {
+func buildWorkloadRow(a cost.AggregatedCost, teamCol string, vis ColumnVisibility, indicator string) []string {
 	spot := ""
 	if a.Key.IsSpot {
 		spot = "yes"
@@ -293,10 +298,13 @@ func buildWorkloadRow(a cost.AggregatedCost, teamCol string, showSubtype, showMo
 		teamCol,
 		orDefault(a.Key.Workload, "-"),
 	}
-	if showSubtype {
+	if vis.Namespace {
+		row = append(row, orDefault(a.Key.Namespace, "-"))
+	}
+	if vis.Subtype {
 		row = append(row, orDefault(a.Key.Subtype, "-"))
 	}
-	if showMode {
+	if vis.Mode {
 		row = append(row, costModeShort(a.CostMode))
 	}
 	row = append(row,
@@ -307,7 +315,7 @@ func buildWorkloadRow(a cost.AggregatedCost, teamCol string, showSubtype, showMo
 		fmt.Sprintf("$%.4f", a.TotalCost),
 		spot,
 	)
-	if showUtilization {
+	if vis.Utilization {
 		if a.HasUtilization {
 			row = append(row,
 				fmt.Sprintf("%.0f%%", a.CPUUtilization*100),

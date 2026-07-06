@@ -248,6 +248,74 @@ func TestWriteSubtypeDifferentiatesInsertID(t *testing.T) {
 	}
 }
 
+func TestInsertIDNoDelimiterCollision(t *testing.T) {
+	// Label values routinely contain hyphens. Distinct groups whose naive
+	// hyphen-joined concatenation is identical must still get distinct
+	// InsertIDs, or BigQuery best-effort dedup silently drops a row.
+	var receivedBody insertAllRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(insertAllResponse{})
+	}))
+	defer srv.Close()
+
+	writer := NewWriter("proj", "ds", "tbl", WithWriterBaseURL(srv.URL))
+
+	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	snapshots := []CostSnapshot{
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "a", Workload: "b-c", IsSpot: false},
+		{Timestamp: ts, ProjectID: "proj", ClusterName: "c", Namespace: "ns",
+			Team: "a-b", Workload: "c", IsSpot: false},
+	}
+
+	if err := writer.Write(context.Background(), snapshots); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(receivedBody.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(receivedBody.Rows))
+	}
+	if receivedBody.Rows[0].InsertID == receivedBody.Rows[1].InsertID {
+		t.Errorf("distinct groups collided on InsertID: %s", receivedBody.Rows[0].InsertID)
+	}
+}
+
+func TestInsertIDBoundedLength(t *testing.T) {
+	// BigQuery limits insertId to 128 bytes; long label values must not
+	// produce oversized IDs.
+	var receivedBody insertAllRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&receivedBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(insertAllResponse{})
+	}))
+	defer srv.Close()
+
+	writer := NewWriter("proj", "ds", "tbl", WithWriterBaseURL(srv.URL))
+
+	long := strings.Repeat("x", 63)
+	snapshots := []CostSnapshot{{
+		Timestamp: time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC),
+		ProjectID: "my-very-long-project-id", ClusterName: long, Namespace: long,
+		Team: long, Workload: long, Subtype: long,
+	}}
+
+	if err := writer.Write(context.Background(), snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(receivedBody.Rows[0].InsertID); got > 128 {
+		t.Errorf("InsertID length = %d, exceeds BigQuery's 128-byte limit", got)
+	}
+}
+
 func TestSnapshotToRow(t *testing.T) {
 	ts := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	s := CostSnapshot{
@@ -388,5 +456,19 @@ func TestInsertIDIncludesCostMode(t *testing.T) {
 
 	if receivedBody.Rows[0].InsertID == receivedBody.Rows[1].InsertID {
 		t.Error("rows with different cost_mode must have different InsertIDs")
+	}
+}
+
+func TestDefaultClientsHaveTimeout(t *testing.T) {
+	// A hung backend must not wedge the daemon forever: every default HTTP
+	// client needs a timeout.
+	if NewWriter("p", "d", "t").httpClient.Timeout == 0 {
+		t.Error("writer default client has no timeout")
+	}
+	if NewReader("p", "d", "t").httpClient.Timeout == 0 {
+		t.Error("reader default client has no timeout")
+	}
+	if NewSetupClient("p").httpClient.Timeout == 0 {
+		t.Error("setup default client has no timeout")
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // GMPBaseURL returns the Google Cloud Managed Prometheus query API base URL
@@ -54,10 +56,14 @@ func WithGMPSystemMetrics() ClientOption {
 	return func(cl *Client) { cl.gmpSystemMetrics = true }
 }
 
+// defaultHTTPTimeout bounds Prometheus queries so a hung endpoint can't
+// stall snapshots or the watch UI indefinitely.
+const defaultHTTPTimeout = 30 * time.Second
+
 // NewClient creates a Prometheus API client.
 func NewClient(baseURL string, opts ...ClientOption) *Client {
 	c := &Client{
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
 		baseURL:    baseURL,
 	}
 	for _, opt := range opts {
@@ -142,7 +148,7 @@ func (c *Client) instantQuery(ctx context.Context, query, nsLabel, podLabel stri
 	if err != nil {
 		return nil, fmt.Errorf("parsing base URL: %w", err)
 	}
-	u.Path += "/api/v1/query"
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/v1/query"
 	params := url.Values{"query": {query}}
 	u.RawQuery = params.Encode()
 

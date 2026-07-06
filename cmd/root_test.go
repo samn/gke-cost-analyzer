@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestExecute(t *testing.T) {
@@ -179,5 +180,45 @@ func TestNewPromClientCustomURLTakesPriority(t *testing.T) {
 	}
 	if client == nil {
 		t.Fatal("expected non-nil client when custom URL is set")
+	}
+}
+
+func TestValidationErrorsAreUsageErrors(t *testing.T) {
+	// Operator input mistakes must be classifiable so main() doesn't report
+	// them to Sentry as application errors.
+	saved := region
+	savedProject := project
+	savedCluster := clusterName
+	savedInterval := recordInterval
+	defer func() {
+		region = saved
+		project = savedProject
+		clusterName = savedCluster
+		recordInterval = savedInterval
+	}()
+	region = ""
+	project = "proj"
+	clusterName = "cluster"
+	recordInterval = 5 * time.Minute
+
+	err := runRecord(rootCmd, nil)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !IsUsageError(err) {
+		t.Errorf("missing --region should be a usage error, got %T: %v", err, err)
+	}
+
+	// Invalid --mode is also a usage error.
+	savedMode := mode
+	defer func() { mode = savedMode }()
+	mode = "bogus"
+	if err := validateMode(); err == nil || !IsUsageError(err) {
+		t.Errorf("invalid mode should be a usage error, got %v", err)
+	}
+
+	// A non-usage error stays unclassified.
+	if IsUsageError(context.DeadlineExceeded) {
+		t.Error("arbitrary errors must not classify as usage errors")
 	}
 }

@@ -35,7 +35,7 @@ func testModel(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil, "")
 }
 
 func TestModelInitialView(t *testing.T) {
@@ -312,7 +312,7 @@ func testModelWithSubtype(lister PodLister) Model {
 	})
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app", SubtypeLabel: "subtype"}
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, nil, "", false, nil, "")
 }
 
 func TestModelHelpTextWithSubtype(t *testing.T) {
@@ -409,7 +409,7 @@ func testModelWithPrometheusProject(lister PodLister, promURL string, promProjec
 	calc := cost.NewCalculator("us-central1", pt, nil)
 	lc := cost.LabelConfig{TeamLabel: "team", WorkloadLabel: "app"}
 	client := prometheus.NewClient(promURL)
-	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, client, promProject, false, nil)
+	return NewModel(ctx, cancel, lister, calc, nil, nil, lc, 5*time.Second, client, promProject, false, nil, "")
 }
 
 func TestModelShowUtilizationWhenPromClientSet(t *testing.T) {
@@ -1040,5 +1040,93 @@ func TestModelExpandSpaceKey(t *testing.T) {
 	m2 := updated.(Model)
 	if !m2.expandedTeams["alpha"] {
 		t.Error("space key should expand team")
+	}
+}
+
+func TestHelpTextAdvertisesReachableKeys(t *testing.T) {
+	// With 11 sortable columns the last one is reached via '-'; the footer
+	// must never advertise a nonexistent key like "11=".
+	m := testModel(&mockPodLister{})
+	m.showSubtype = true
+	m.showMode = true
+	m.showUtilization = true
+
+	help := m.helpText()
+	if strings.Contains(help, "11=") {
+		t.Errorf("help advertises nonexistent key 11: %s", help)
+	}
+	if !strings.Contains(help, "-=Waste") {
+		t.Errorf("help should advertise '-' for Waste, got: %s", help)
+	}
+}
+
+func TestCursorClampedWhenRefreshShrinksTable(t *testing.T) {
+	// A periodic refresh can remove rows (workloads scaled to zero). If the
+	// cursor is past the new end it must be clamped, otherwise the selection
+	// highlight vanishes and navigation keys stop responding.
+	m := testModel(&mockPodLister{})
+
+	bigMsg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "a", Workload: "w1"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "b", Workload: "w2"}, PodCount: 1},
+		{Key: cost.GroupKey{Team: "c", Workload: "w3"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(bigMsg)
+	m = updated.(Model)
+
+	// Move cursor to the last row.
+	m.cursor = len(m.displayRows) - 1
+	if m.cursor < 1 {
+		t.Fatalf("expected multiple display rows, got %d", len(m.displayRows))
+	}
+
+	// Refresh with a single remaining workload.
+	smallMsg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Team: "a", Workload: "w1"}, PodCount: 1},
+	}}
+	updated, _ = m.Update(smallMsg)
+	m = updated.(Model)
+
+	if m.cursor >= len(m.displayRows) {
+		t.Errorf("cursor %d out of bounds after refresh (rows=%d)", m.cursor, len(m.displayRows))
+	}
+}
+
+func TestNamespaceColumnShownForMultiNamespaceRows(t *testing.T) {
+	// Namespace is part of the group identity; when rows span more than one
+	// namespace the NAMESPACE column must appear or identical-label
+	// workloads render as indistinguishable duplicates.
+	m := testModel(&mockPodLister{})
+
+	msg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Namespace: "prod", Team: "a", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Namespace: "staging", Team: "a", Workload: "web"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+	m.grouped = false
+	m.rebuildDisplay()
+
+	view := m.View().Content
+	if !strings.Contains(view, "NAMESPACE") {
+		t.Errorf("multi-namespace rows should show the NAMESPACE column, got:\n%s", view)
+	}
+	if !strings.Contains(view, "prod") || !strings.Contains(view, "staging") {
+		t.Errorf("namespace values should be rendered, got:\n%s", view)
+	}
+}
+
+func TestNamespaceColumnHiddenForSingleNamespace(t *testing.T) {
+	m := testModel(&mockPodLister{})
+
+	msg := costDataMsg{aggs: []cost.AggregatedCost{
+		{Key: cost.GroupKey{Namespace: "default", Team: "a", Workload: "web"}, PodCount: 1},
+		{Key: cost.GroupKey{Namespace: "default", Team: "b", Workload: "api"}, PodCount: 1},
+	}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if strings.Contains(m.View().Content, "NAMESPACE") {
+		t.Error("single-namespace rows should not show the NAMESPACE column")
 	}
 }

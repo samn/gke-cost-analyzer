@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/signal"
 	"time"
 
@@ -35,13 +34,13 @@ var watchCmd = &cobra.Command{
 
 func runWatch(cmd *cobra.Command, _ []string) error {
 	if region == "" {
-		return fmt.Errorf("--region is required")
+		return usageErrorf("--region is required")
 	}
 	if watchInterval <= 0 {
-		return fmt.Errorf("--interval must be positive")
+		return usageErrorf("--interval must be positive")
 	}
 
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	var autopilotCalc *cost.Calculator
@@ -74,7 +73,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Println("Connecting to Kubernetes cluster...")
-	lister, err := newPodLister()
+	apiNS, _ := listNamespace()
+	lister, err := newPodLister(apiNS)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
@@ -94,7 +94,8 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 		trendCfg = &cfg
 	}
 
-	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg)
+	_, postFilterNS := listNamespace()
+	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg, postFilterNS)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

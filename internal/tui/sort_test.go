@@ -228,7 +228,7 @@ func TestColumnForKeyWithSubtype(t *testing.T) {
 		{'8', SortByCost},
 	}
 	for _, tt := range tests {
-		col, ok := ColumnForKey(tt.key, true, false, false)
+		col, ok := ColumnForKey(tt.key, ColumnVisibility{Subtype: true, Mode: false, Utilization: false})
 		if !ok {
 			t.Errorf("key %c should be valid with subtype", tt.key)
 		}
@@ -238,7 +238,7 @@ func TestColumnForKeyWithSubtype(t *testing.T) {
 	}
 
 	// Invalid key
-	_, ok := ColumnForKey('9', true, false, false)
+	_, ok := ColumnForKey('9', ColumnVisibility{Subtype: true, Mode: false, Utilization: false})
 	if ok {
 		t.Error("key 9 should be invalid with subtype")
 	}
@@ -374,7 +374,7 @@ func TestColumnForKeyWithoutSubtype(t *testing.T) {
 		{'7', SortByCost},
 	}
 	for _, tt := range tests {
-		col, ok := ColumnForKey(tt.key, false, false, false)
+		col, ok := ColumnForKey(tt.key, ColumnVisibility{Subtype: false, Mode: false, Utilization: false})
 		if !ok {
 			t.Errorf("key %c should be valid without subtype", tt.key)
 		}
@@ -384,8 +384,30 @@ func TestColumnForKeyWithoutSubtype(t *testing.T) {
 	}
 
 	// Key 8 is invalid without subtype
-	_, ok := ColumnForKey('8', false, false, false)
+	_, ok := ColumnForKey('8', ColumnVisibility{Subtype: false, Mode: false, Utilization: false})
 	if ok {
 		t.Error("key 8 should be invalid without subtype")
+	}
+}
+
+func TestColumnForKeyOverflowColumns(t *testing.T) {
+	// With subtype + mode + utilization all enabled there are 11 sortable
+	// columns but only 10 number keys; the overflow continues on '-' and '='.
+	col, ok := ColumnForKey('-', ColumnVisibility{Subtype: true, Mode: true, Utilization: true})
+	if !ok {
+		t.Fatal("'-' should map to the 11th sortable column")
+	}
+	if col != SortByWaste {
+		t.Errorf("'-' mapped to %v, want SortByWaste", col)
+	}
+
+	// '=' would be the 12th sortable column, which doesn't exist.
+	if _, ok := ColumnForKey('=', ColumnVisibility{Subtype: true, Mode: true, Utilization: true}); ok {
+		t.Error("'=' should not map to any column with 11 sortable columns")
+	}
+
+	// Overflow keys do nothing when fewer columns are visible.
+	if _, ok := ColumnForKey('-', ColumnVisibility{Subtype: false, Mode: false, Utilization: false}); ok {
+		t.Error("'-' should not map to a column with only 7 sortable columns")
 	}
 }

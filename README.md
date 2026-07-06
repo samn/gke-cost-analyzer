@@ -8,7 +8,7 @@ A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard
 - **Standard GKE cost estimation**: Per-node proportional attribution for standard GKE workloads based on Compute Engine pricing
 - **Historical cost analysis** (`history`): Query BigQuery for recorded cost data with an interactive TUI, sparkline trend visualizations, and optional filters by cluster, namespace, and team
 - **BigQuery recording** (`record`): Periodically writes cost snapshots to BigQuery for historical analysis, with optional Parquet export via `--dry-run --output-file`
-- **Automated setup** (`setup`): Creates BigQuery dataset and table with the correct schema
+- **Automated setup** (`setup`): Creates the BigQuery dataset and table with the correct schema, and migrates existing tables when newer versions add columns
 - **Utilization metrics**: Automatic CPU/memory utilization from GCP Managed Prometheus (or custom `--prometheus-url`), with efficiency scoring and wasted cost calculation
 - **Unmatched pod detection** (`unmatched-pods`): Find running pods missing team or workload labels, grouped by base name
 - **Price caching**: Fetches Autopilot and Compute Engine pricing from the Cloud Billing Catalog API and caches locally for 24 hours
@@ -125,7 +125,7 @@ All GCP API calls use [Application Default Credentials](https://cloud.google.com
 | `roles/billing.viewer` | `watch`, `record` | Read Autopilot pricing SKUs from the Cloud Billing Catalog API |
 | `roles/bigquery.dataViewer` | `history` | Read cost snapshots from BigQuery |
 | `roles/bigquery.dataEditor` | `record` | Stream-insert cost snapshots into BigQuery |
-| `roles/bigquery.dataOwner` | `setup` | Create BigQuery datasets and tables (only needed once) |
+| `roles/bigquery.dataOwner` | `setup` | Create BigQuery datasets and tables; re-run after upgrades to migrate the schema |
 | `roles/monitoring.metricReader` | `watch`, `record` | Query CPU/memory utilization via GCP Managed Prometheus |
 
 **Notes:**
@@ -154,7 +154,7 @@ Options:
 - `--workload-label`: Pod label for workload grouping (default: "app")
 - `--subtype-label`: Pod label for subtype grouping (optional)
 
-Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `e` toggle event log, `[`/`]` scroll event log, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `e` toggle event log, `[`/`]` scroll event log, `1`-`9`,`0`,`-`,`=` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
 
 ### Record costs to BigQuery
 
@@ -212,7 +212,7 @@ Options:
 - `--namespace`: Filter to a specific namespace
 - `--team`: Filter by team name
 
-Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `1`-`9`,`0` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
+Interactive keys: `Enter`/`a` expand/collapse teams, `g` toggle flat/grouped view, `1`-`9`,`0`,`-`,`=` sort columns, `j`/`k`/`Up`/`Down` navigate, `q` quit.
 
 ### Find pods missing labels
 

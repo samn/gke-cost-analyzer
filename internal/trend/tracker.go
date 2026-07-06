@@ -120,8 +120,12 @@ func (t *Tracker) Update(aggs []cost.AggregatedCost, now time.Time) []Event {
 		oldVar := s.ewmaVar
 		s.samples++
 
-		// Check for aberration using pre-update state.
-		if s.samples >= t.config.MinSamples && a.CostPerHour >= t.config.MinCostPerHour {
+		// Check for aberration using pre-update state. Threshold <= 0
+		// disables detection. The cost floor ignores noise-level workloads,
+		// but compares against the larger of baseline and current cost so a
+		// big workload crashing to near-zero is still flagged.
+		if t.config.Threshold > 0 && s.samples >= t.config.MinSamples &&
+			math.Max(oldEWMA, a.CostPerHour) >= t.config.MinCostPerHour {
 			stddev := math.Sqrt(oldVar)
 			// Use a floor of 1% of the EWMA so that perfectly stable
 			// workloads still detect sudden jumps (variance=0 otherwise).

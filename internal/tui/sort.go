@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/samn/gke-cost-analyzer/internal/cost"
@@ -19,6 +20,7 @@ type SortColumn int
 const (
 	SortByTeam SortColumn = iota
 	SortByWorkload
+	SortByNamespace
 	SortBySubtype
 	SortByMode
 	SortByPods
@@ -41,7 +43,12 @@ type columnDef struct {
 
 // ColumnVisibility controls which optional columns are shown.
 type ColumnVisibility struct {
-	Cluster     bool
+	Cluster bool
+	// Namespace is shown when the current rows span more than one namespace:
+	// namespace is part of the group identity, so without it workloads with
+	// identical labels in different namespaces would render as
+	// indistinguishable duplicate rows.
+	Namespace   bool
 	Subtype     bool
 	Mode        bool
 	Utilization bool
@@ -54,6 +61,9 @@ func visibleColumns(vis ColumnVisibility) []columnDef {
 	cols := []columnDef{
 		{header: "TEAM", sortCol: SortByTeam, sortable: true, helpName: "Team"},
 		{header: "WORKLOAD", sortCol: SortByWorkload, sortable: true, helpName: "Workload"},
+	}
+	if vis.Namespace {
+		cols = append(cols, columnDef{header: "NAMESPACE", sortCol: SortByNamespace, sortable: true, helpName: "Ns"})
 	}
 	if vis.Subtype {
 		cols = append(cols, columnDef{header: "SUBTYPE", sortCol: SortBySubtype, sortable: true, helpName: "Subtype"})
@@ -119,6 +129,8 @@ func compareByColumn(a, b cost.AggregatedCost, col SortColumn) int {
 		return compareStr(a.Key.Team, b.Key.Team)
 	case SortByWorkload:
 		return compareStr(a.Key.Workload, b.Key.Workload)
+	case SortByNamespace:
+		return compareStr(a.Key.Namespace, b.Key.Namespace)
 	case SortBySubtype:
 		return compareStr(a.Key.Subtype, b.Key.Subtype)
 	case SortByMode:
@@ -249,10 +261,47 @@ func SortTeamGroups(groups []TeamGroup, cfg SortConfig) {
 	}
 }
 
-// ColumnForKey maps a number key press to a sort column.
+// sortKeys is the ordered key sequence for sortable columns: 1-9, 0, then
+// '-' and '=' for overflow (a fully-enabled table has 11 sortable columns).
+// This is the single source of truth shared by the key handlers and the help
+// footers.
+var sortKeys = []rune{'1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='}
+
+// sortKeyIndex returns the sortable-column index for a key press.
+func sortKeyIndex(key rune) (int, bool) {
+	for i, k := range sortKeys {
+		if k == key {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// sortKeyForIndex returns the key assigned to the i-th sortable column.
+func sortKeyForIndex(i int) (rune, bool) {
+	if i < 0 || i >= len(sortKeys) {
+		return 0, false
+	}
+	return sortKeys[i], true
+}
+
+// sortKeyHelp renders the "Sort: 1=Team 2=Workload ..." footer segment for an
+// ordered list of sortable-column names, assigning keys from sortKeys. Both
+// the watch and history footers use this so key advertising cannot drift from
+// the shared key sequence.
+func sortKeyHelp(names []string) string {
+	help := "Sort:"
+	for i, name := range names {
+		if key, ok := sortKeyForIndex(i); ok {
+			help += fmt.Sprintf(" %c=%s", key, name)
+		}
+	}
+	return help
+}
+
+// ColumnForKey maps a sort key press to a sort column.
 // Returns the column and true if the key is valid, or false otherwise.
-func ColumnForKey(key rune, showSubtype, showUtilization, showMode bool) (SortColumn, bool) {
-	vis := ColumnVisibility{Subtype: showSubtype, Mode: showMode, Utilization: showUtilization}
+func ColumnForKey(key rune, vis ColumnVisibility) (SortColumn, bool) {
 	defs := visibleColumns(vis)
 
 	// Build sortable column list
@@ -263,12 +312,8 @@ func ColumnForKey(key rune, showSubtype, showUtilization, showMode bool) (SortCo
 		}
 	}
 
-	// Keys '1'-'9' map to indices 0-8, '0' maps to index 9.
-	idx := int(key-'1') % 10
-	if key == '0' {
-		idx = 9
-	}
-	if idx < 0 || idx >= len(cols) {
+	idx, ok := sortKeyIndex(key)
+	if !ok || idx >= len(cols) {
 		return 0, false
 	}
 	return cols[idx], true

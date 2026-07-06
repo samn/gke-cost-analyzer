@@ -96,9 +96,21 @@ func TestEnsureTableCreatesNew(t *testing.T) {
 	}
 }
 
-func TestEnsureTableAlreadyExists(t *testing.T) {
+func TestEnsureTableAlreadyExistsCompleteSchema(t *testing.T) {
+	// Existing table already has every column — no PATCH should be issued.
+	var patched bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusConflict)
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusConflict)
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]any{
+				"schema": tableSchemaWrapper{Fields: TableSchema()},
+			})
+		case http.MethodPatch:
+			patched = true
+			w.WriteHeader(http.StatusOK)
+		}
 	}))
 	defer srv.Close()
 
@@ -106,6 +118,95 @@ func TestEnsureTableAlreadyExists(t *testing.T) {
 	err := sc.EnsureTable(context.Background(), "ds", "tbl")
 	if err != nil {
 		t.Fatalf("expected no error for existing table, got: %v", err)
+	}
+	if patched {
+		t.Error("no PATCH expected when the schema is already complete")
+	}
+}
+
+func TestEnsureTableMigratesMissingColumns(t *testing.T) {
+	// A table created by an older version lacks the newer NULLABLE columns
+	// (cost_mode, utilization fields). EnsureTable must add them, otherwise
+	// every subsequent insert that populates them fails.
+	full := TableSchema()
+	old := full[:16] // schema before cost_mode + utilization columns
+
+	var patchedFields []FieldSchema
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusConflict)
+		case http.MethodGet:
+			if r.URL.Path != "/projects/my-project/datasets/ds/tables/tbl" {
+				t.Errorf("unexpected GET path %s", r.URL.Path)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"schema": tableSchemaWrapper{Fields: old},
+			})
+		case http.MethodPatch:
+			if r.URL.Path != "/projects/my-project/datasets/ds/tables/tbl" {
+				t.Errorf("unexpected PATCH path %s", r.URL.Path)
+			}
+			var body struct {
+				Schema tableSchemaWrapper `json:"schema"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			patchedFields = body.Schema.Fields
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	sc := NewSetupClient("my-project", WithSetupBaseURL(srv.URL))
+	err := sc.EnsureTable(context.Background(), "ds", "tbl")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(patchedFields) != len(full) {
+		t.Fatalf("PATCH schema has %d fields, want %d (existing + missing)", len(patchedFields), len(full))
+	}
+	names := map[string]bool{}
+	for _, f := range patchedFields {
+		names[f.Name] = true
+	}
+	for _, want := range []string{"cost_mode", "cpu_utilization", "memory_utilization", "efficiency_score", "wasted_cost"} {
+		if !names[want] {
+			t.Errorf("PATCH schema missing column %s", want)
+		}
+	}
+}
+
+func TestEnsureTableMigrationRejectsRequiredAddition(t *testing.T) {
+	// BigQuery only allows adding NULLABLE columns to an existing table; if a
+	// REQUIRED column is missing the migration must fail loudly rather than
+	// send a doomed PATCH.
+	full := TableSchema()
+	// Existing schema missing the REQUIRED interval_seconds (index 15) but
+	// containing everything else.
+	old := append(append([]FieldSchema{}, full[:15]...), full[16:]...)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			w.WriteHeader(http.StatusConflict)
+		case http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]any{
+				"schema": tableSchemaWrapper{Fields: old},
+			})
+		case http.MethodPatch:
+			t.Error("PATCH must not be attempted for REQUIRED additions")
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer srv.Close()
+
+	sc := NewSetupClient("my-project", WithSetupBaseURL(srv.URL))
+	err := sc.EnsureTable(context.Background(), "ds", "tbl")
+	if err == nil {
+		t.Fatal("expected error for REQUIRED column migration")
 	}
 }
 

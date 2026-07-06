@@ -3,6 +3,7 @@ package pricing
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -247,5 +248,85 @@ func TestCacheTTLOption(t *testing.T) {
 	}
 	if loaded != nil {
 		t.Fatal("expected nil for cache expired beyond custom TTL")
+	}
+}
+
+func TestCacheSaveIsAtomic(t *testing.T) {
+	// Save must go through a temp file + rename (new inode each save) so a
+	// crash or concurrent process can never observe a truncated cache file.
+	dir := t.TempDir()
+	c, err := NewCache(WithCacheDir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prices := []Price{{Region: "us-central1", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.01}}
+	if err := c.Save(prices); err != nil {
+		t.Fatal(err)
+	}
+	inodeBefore := cacheFileInode(t, c.path())
+
+	if err := c.Save(prices); err != nil {
+		t.Fatal(err)
+	}
+	if inodeAfter := cacheFileInode(t, c.path()); inodeAfter == inodeBefore {
+		t.Error("cache save rewrote the file in place (same inode); expected temp-file + rename")
+	}
+
+	// No temp remnants.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only the cache file, got %d entries", len(entries))
+	}
+}
+
+func cacheFileInode(t *testing.T, path string) uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("inode not available on this platform")
+	}
+	return st.Ino
+}
+
+func TestComputeCacheUsesSeparateDefaultFile(t *testing.T) {
+	// A bare NewCache() must not mix Autopilot and Compute Engine prices in
+	// one file: the two on-disk shapes decode into each other without error,
+	// silently corrupting whichever loads second.
+	dir := t.TempDir()
+	c, err := NewCache(WithCacheDir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.SaveComputePrices([]ComputePrice{
+		{Region: "us-central1", MachineFamily: "n2", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.03},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Autopilot cache must still be a miss.
+	got, err := c.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("Autopilot cache should be a miss after saving compute prices, got %+v", got)
+	}
+
+	// And the compute cache loads its own data.
+	cached, err := c.LoadComputePrices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached == nil || len(cached.Prices) != 1 {
+		t.Fatalf("compute cache miss after save: %+v", cached)
 	}
 }

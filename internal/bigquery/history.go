@@ -30,6 +30,7 @@ type WorkloadKey struct {
 	Team        string
 	Workload    string
 	Subtype     string
+	Namespace   string
 	CostMode    string
 }
 
@@ -40,6 +41,7 @@ func KeyFromRow(r HistoryCostRow) WorkloadKey {
 		Team:        r.Team,
 		Workload:    r.Workload,
 		Subtype:     r.Subtype,
+		Namespace:   r.Namespace,
 		CostMode:    r.CostMode,
 	}
 }
@@ -75,12 +77,40 @@ func BucketSeconds(d time.Duration) int64 {
 	}
 }
 
-// BuildSparklines groups time-series points by workload and returns
-// pre-rendered sparkline strings keyed by WorkloadKey.
-func BuildSparklines(points []TimeSeriesPoint) map[WorkloadKey][]float64 {
-	grouped := make(map[WorkloadKey][]float64)
+// BuildSparklinesWithGaps groups time-series points by workload, ordering by
+// bucket time and zero-filling missing buckets between each workload's first
+// and last bucket. A missing bucket means no cost was recorded for it;
+// omitting it would compress time and misrepresent the trend. bucketSeconds
+// must be positive (it always is: BucketSeconds never returns less than 300).
+func BuildSparklinesWithGaps(points []TimeSeriesPoint, bucketSeconds int64) map[WorkloadKey][]float64 {
+	type window struct {
+		costs    map[int64]float64 // bucket unix seconds → cost
+		min, max int64
+	}
+	windows := make(map[WorkloadKey]*window)
 	for _, p := range points {
-		grouped[p.Key] = append(grouped[p.Key], p.BucketCost)
+		bucket := p.Bucket.Unix()
+		w, ok := windows[p.Key]
+		if !ok {
+			w = &window{costs: make(map[int64]float64), min: bucket, max: bucket}
+			windows[p.Key] = w
+		}
+		w.costs[bucket] += p.BucketCost
+		if bucket < w.min {
+			w.min = bucket
+		}
+		if bucket > w.max {
+			w.max = bucket
+		}
+	}
+
+	grouped := make(map[WorkloadKey][]float64, len(windows))
+	for key, w := range windows {
+		series := make([]float64, 0, (w.max-w.min)/bucketSeconds+1)
+		for b := w.min; b <= w.max; b += bucketSeconds {
+			series = append(series, w.costs[b])
+		}
+		grouped[key] = series
 	}
 	return grouped
 }

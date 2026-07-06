@@ -34,8 +34,9 @@ The program should be efficient so that it can run collecting metrics for many P
 ### `watch`
 Real-time terminal display of workload costs. Fetches pod data on an interval
 (default 10s), calculates costs, aggregates by label hierarchy, and renders an
-interactive table via BubbleTea. Supports interactive column sorting with number
-keys.
+interactive table via BubbleTea. Supports interactive column sorting with the
+keys `1`-`9`, `0`, then `-` and `=` for overflow columns (a fully-enabled
+table has more sortable columns than number keys).
 
 Flags: `--interval`, `--region` (required), `--project` (global), `--namespace`,
 `--team-label`, `--workload-label`, `--subtype-label`, `--prometheus-url` (optional),
@@ -62,7 +63,8 @@ BigQuery. Runs once immediately on startup, then on a ticker.
 
 Flags: `--interval` (default 5m), `--region` (required), `--project` (required, global),
 `--cluster-name` (required), `--dataset`, `--table`, `--namespace`,
-`--dry-run`, `--output-file` (requires `--dry-run`; writes Parquet locally),
+`--dry-run`, `--output-file` (requires `--dry-run`; appends to a local
+Parquet file — each append rewrites the file via temp file + atomic rename),
 `--prometheus-url` (optional).
 
 Utilization metrics are automatically fetched from GCP Managed Prometheus
@@ -90,22 +92,45 @@ commands. Use `--cluster-name` to filter to a specific cluster, or
 `--all-clusters` to query data from all clusters. Using `--all-clusters` adds
 a sortable CLUSTER column to the TUI. The two flags are mutually exclusive.
 If auto-detection fails and no `--cluster-name` is provided, all clusters are
-queried (equivalent to `--all-clusters` but without the CLUSTER column).
+queried; a warning is printed to stderr and the CLUSTER column is shown so
+the blended data is identifiable.
+
+The duration argument is capped at 5 years (guarding int64-nanosecond
+overflow for absurd inputs).
 
 The command executes two BigQuery queries (both always include `cluster_name`
 in SELECT and GROUP BY to distinguish rows from different clusters):
-1. **Aggregated costs**: groups by cluster_name/team/workload/subtype/cost_mode,
-   computing total spend, average $/hr, average pod count, CPU/memory requests,
-   and utilization metrics (when available).
-2. **Time-bucketed costs**: groups by cluster_name/team/workload/subtype/cost_mode
-   and time bucket for sparkline rendering. Bucket size adapts to the time range
-   (5min for ≤6h, 30min for ≤1d, 1hr for ≤3d, 4hr for ≤1w, 1day for longer).
+1. **Aggregated costs**: a two-level aggregation. Rows first collapse per
+   snapshot timestamp (record writes one row per is_spot value per snapshot;
+   summing `interval_seconds` across those sibling rows would double-count the
+   covered time and distort the AVG columns), then aggregate across snapshots
+   by cluster_name/team/workload/subtype/namespace/cost_mode — computing total
+   spend, average $/hr, average pod count, CPU/memory requests, and utilization
+   metrics (when available). The average $/hr divides `SUM(total_cost)` by the
+   covered time `SUM(interval_seconds)/3600` over per-snapshot windows (not
+   the MAX-MIN timestamp span, which has an N/(N-1) fencepost error and is
+   NULL for single-snapshot groups).
+2. **Time-bucketed costs**: groups by cluster_name/team/workload/subtype/
+   namespace/cost_mode and time bucket for sparkline rendering. Bucket size
+   adapts to the time range (5min for ≤6h, 30min for ≤1d, 1hr for ≤3d, 4hr for
+   ≤1w, 1day for longer).
 
-The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [SUBTYPE], [MODE],
-AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT, and
-optionally CPU%, MEM%, WASTE when utilization data is present. The CLUSTER
+Both queries share the same grouping key so table rows and sparklines join
+consistently. `cost_mode` is normalized with `IFNULL(cost_mode, 'autopilot')`.
+Filter values (`--cluster-name`, `--namespace`, `--team`) are passed as named
+query parameters (never interpolated into SQL); project/dataset/table
+identifiers are validated. Query results follow BigQuery's `pageToken`
+pagination so large result sets are not truncated.
+
+The TUI displays columns: [CLUSTER], TEAM, WORKLOAD, [NAMESPACE], [SUBTYPE],
+[MODE], AVG PODS, AVG CPU, AVG MEM, AVG $/HR, TOTAL, TREND (sparkline), SPOT,
+and optionally CPU%, MEM%, WASTE when utilization data is present. The CLUSTER
 column is shown when `--all-clusters` is used. When filtering to a single
-cluster, the cluster name is displayed in the header instead.
+cluster, the cluster name is displayed in the header instead. The NAMESPACE
+column (in both `watch` and `history`) appears automatically when the rows
+span more than one namespace — namespace is part of the group identity, so
+without it identical-label workloads in different namespaces would render as
+indistinguishable duplicate rows.
 
 Interactive features match the `watch` command: team grouping with
 expand/collapse (Enter/a), flat/grouped toggle (g), column sorting (1-9,0),
@@ -116,10 +141,13 @@ inline in the table, scaled per-workload from min to max bucket cost.
 
 ### `setup`
 Create the BigQuery dataset and table with the correct schema, partitioning,
-and clustering configuration.
+and clustering configuration. If the table already exists, its schema is
+migrated: columns present in the current schema but missing from the table
+are added via a schema PATCH (BigQuery permits additive NULLABLE columns).
+A missing REQUIRED column is an error — BigQuery cannot add it in place.
 
 ### `version`
-Print version, git commit, and build date.
+Print version, git commit, and build date. Runs no environment detection.
 
 ### Global flags
 `--team-label` (default `team`), `--workload-label` (default `app`),
@@ -140,6 +168,11 @@ appropriate calculator; a MODE column is shown in the TUI.
 Environment defaults: `--region`, `--project`, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
 current kubeconfig context. Explicit CLI flags always take priority.
+Detection is skipped entirely when all three values are set (it costs up to
+three metadata round trips, 1s timeout each off-GCP); the three metadata
+lookups run concurrently; `version` never detects. Zones from either source
+are converted to regions (`us-central1-a` → `us-central1`) since pricing is
+regional.
 
 **Prometheus auto-detection**: When `--prometheus-url` is not set and a GCP
 project ID is available (via `--project` or auto-detected), utilization metrics
@@ -176,14 +209,17 @@ first tiered rate with a non-zero price is used. The price is constructed from
 Memory prices are **per GB-hour** and require no conversion.
 
 **Caching**: Prices are cached to `~/.cache/gke-cost-analyzer/prices.json`
-with a default TTL of 24 hours. Corrupt cache files are treated as cache misses
-(not errors). Cache save failures are logged as warnings but don't block
-operation.
+with a default TTL of 24 hours. Writes are atomic (temp file + rename).
+Corrupt cache files are treated as cache misses (not errors). Cache save
+failures are logged as warnings but don't block operation. Long-running
+`record` daemons refresh their in-memory price tables when the TTL lapses.
 
 #### Edge cases
 - **Zero-price tiered rates**: Skipped (the first non-zero rate is used).
 - **Multiple tiered rates**: Only the first non-zero rate is used (free-tier
   rates with `StartUsageAmount: 0` and zero price are common).
+- **Multiple `PricingInfo` records**: Only the record with the latest
+  `effectiveTime` is used (they are timestamped pricing revisions).
 - **Invalid `Units` string**: If `Units` cannot be parsed as a float, it
   defaults to 0; only the `Nanos` portion contributes.
 - **Empty regions**: Falls back from `GeoTaxonomy.Regions` to `ServiceRegions`.
@@ -211,9 +247,11 @@ GMP collectors) that cannot be user-labeled and would inflate the "unlabeled"
 bucket. The exclusion uses an O(1) set lookup built once per `ListPods` call.
 
 **Resource extraction**: CPU and memory **requests** are summed across all
-containers in the pod (init containers are not included — Autopilot billing
-is based on regular container requests). Resources are stored in both raw
-units (millicores, bytes) and derived units (vCPU, GB).
+regular containers plus native sidecars — init containers with
+`restartPolicy: Always`, which run for the pod's whole lifetime and are
+billed by Autopilot. Classic init containers (no restart policy) are not
+included. Resources are stored in both raw units (millicores, bytes) and
+derived units (vCPU, GB).
 
 **Unit handling**:
 - CPU: Kubernetes millicores → `CPURequestVCPU = millicores / 1000.0`
@@ -254,8 +292,10 @@ are excluded).
 before the first `-`. Special case: bare `custom-N-M` types map to family
 `n1` (GCP bills N1 rates for these).
 
-**Allocatable resources**: vCPU and memory are read from
-`node.Status.Allocatable` (reliable for all machine types including custom).
+**Node resources**: vCPU and memory are read from `node.Status.Capacity` —
+GCE bills the full machine, not the Kubernetes allocatable value (capacity
+minus kube/system reserves). Allocatable is used as a fallback only when
+Capacity is absent.
 
 **Spot detection**: A node is considered Spot if its label
 `cloud.google.com/gke-spot` is `"true"`.
@@ -266,18 +306,28 @@ Prices are fetched from the **Cloud Billing Catalog API** for the Compute
 Engine service (ID `6F81-5844-456A`). The API is paginated (page size 5000).
 
 **SKU Matching**: SKUs are matched by regex:
-`^(Spot Preemptible )?(N2|E2|N1|C3|...) Instance (Core|Ram) running in`
+`^(Spot Preemptible )?(N2|E2|N1|C2|...|M1|M2|M4|C4D|H4D|...)( <qualifier>)? Instance (Core|Ram) running in`
 
 - `"Core"` → CPU, `"Ram"` → Memory
 - `"Spot Preemptible"` prefix → Spot tier
 - Family name → MachineFamily (lowercased)
+- An optional qualifier between family and "Instance" is allowed (e.g. `AMD`,
+  `Arm`, `Predefined`, `Memory-optimized`), **except** variant qualifiers with
+  different pricing (`Custom`, `Sole Tenancy`), which are rejected so they
+  can't clobber the plain family price.
+- Alternate description forms without a family token are mapped explicitly:
+  `"Compute optimized (Core|Ram)"` → `c2`, `"Memory-optimized Instance
+  (Core|Ram)"` → `m1` (M2 is billed as M1 plus an upgrade-premium SKU).
+- Duplicate `(region, family, resource, tier)` keys keep the **first** price
+  seen, so the table doesn't depend on catalog page ordering.
 
 Unlike Autopilot (per-mCPU), Compute Engine CPU prices are already per-vCPU-hour
 — no ×1000 conversion is needed.
 
 **Caching**: Prices are cached to
-`~/.cache/gke-cost-analyzer/compute_prices.json` with the same 24-hour
-TTL as Autopilot prices.
+`~/.cache/gke-cost-analyzer/compute_prices.json` (a separate file from the
+Autopilot cache — the two on-disk shapes would silently decode into each
+other) with the same 24-hour TTL as Autopilot prices.
 
 ### 3b. Standard Cost Calculation (`internal/cost`)
 
@@ -285,11 +335,18 @@ For standard GKE, costs are attributed to pods proportionally by their resource
 requests on each node:
 
 ```
-node_cpu_cost = node.VCPU × cpu_price_per_vcpu_hour
+node_cpu_cost = node.VCPU × cpu_price_per_vcpu_hour        (VCPU/MemoryGB from node Capacity)
 node_mem_cost = node.MemoryGB × mem_price_per_gb_hour
 pod_cpu_share = pod.CPURequest / total_cpu_requests_on_node
 pod_cost_per_hour = pod_cpu_share × node_cpu_cost + pod_mem_share × node_mem_cost
 ```
+
+The share denominators must come from **all pods on the node** (minus the
+excluded system namespaces). When `--namespace` is set and standard-mode
+attribution is active, pods are therefore listed cluster-wide, costs are
+computed over the full set, and the namespace filter is applied to pod costs
+afterwards — otherwise a single filtered pod would absorb its entire node's
+cost.
 
 Edge cases:
 - **Zero total requests on a node**: Cost share is 0 for all pods
@@ -333,6 +390,7 @@ The calculator uses an injectable `now` function for deterministic testing.
 ### 4. Cost Aggregation (`internal/cost`)
 
 Pod costs are grouped by a **GroupKey** consisting of:
+- `Namespace`: the pod's Kubernetes namespace
 - `Team`: value of the team label (or `""` if label missing/unconfigured)
 - `Workload`: value of the workload label
 - `Subtype`: value of the subtype label
@@ -340,11 +398,13 @@ Pod costs are grouped by a **GroupKey** consisting of:
 - `CostMode`: `"autopilot"` or `"standard"` (derived from `pod.IsAutopilot`)
 
 SPOT and On-Demand pods with the same labels are **always separate groups**
-because they have different pricing tiers.
+because they have different pricing tiers. Pods with the same labels in
+different namespaces are separate groups too, so the recorded namespace is
+deterministic.
 
 Aggregated fields are summed across all pods in the group: `PodCount`,
 `TotalCPUVCPU`, `TotalMemGB`, `CPUCost`, `MemCost`, `TotalCost`,
-`CostPerHour`. The `Namespace` is taken from the first pod in the group.
+`CostPerHour`. Output is sorted by GroupKey for deterministic ordering.
 
 #### Edge cases
 - **Missing labels**: Pods without a configured label get `""` as the value;
@@ -445,11 +505,14 @@ when `--prometheus-url` is configured and utilization data is available.
 - Partitioned by DAY on `timestamp`
 - Clustered by `team`, `workload`
 
-**InsertID** for deduplication:
-`{project}-{cluster}-{namespace}-{team}-{workload}-{subtype}-{is_spot}-{cost_mode}-{timestamp_nanos}`
+**InsertID** for deduplication: a SHA-256 hash (hex-encoded) over the
+JSON-encoded identity tuple
+`[project, cluster, namespace, team, workload, subtype, is_spot, cost_mode, timestamp_nanos]`.
 
-This ensures that rows differing only by subtype, spot status, or cost mode get
-unique IDs, preventing silent deduplication.
+Hashing an unambiguous encoding makes the ID collision-free even when label
+values contain delimiter characters (a naive `-`-joined concatenation let
+distinct groups collide and be silently deduplicated), and keeps it under
+BigQuery's 128-byte insertId limit regardless of label lengths.
 
 **Snapshot timing**: The timestamp is captured **before** listing pods, so it
 reflects the start of the snapshot window rather than when processing completed.
@@ -457,9 +520,22 @@ reflects the start of the snapshot window rather than when processing completed.
 The `record` command writes the cost snapshot at each interval. All cost fields
 (`cpu_cost`, `memory_cost`, `total_cost`, `wasted_cost`) represent the cost
 incurred during the snapshot **interval window** only, computed as
-`cost_per_hour × interval_hours`. This ensures that `SUM(total_cost)` (or
-`SUM(wasted_cost)`) over a time range equals the actual cost (or waste) for that
-period.
+`cost_per_hour × interval_hours`. The interval window is the **actual elapsed
+time since the last successful snapshot** (the nominal `--interval` for the
+first snapshot), recorded in `interval_seconds` — so missed or slow ticks
+don't undercount, and `SUM(total_cost)` (or `SUM(wasted_cost)`) over a time
+range equals the actual cost (or waste) for that period.
+
+**Daemon resilience**: the process traps SIGINT and SIGTERM for graceful
+shutdown (Kubernetes sends SIGTERM). Each snapshot runs under a context
+bounded by max(interval, 2 minutes) — the floor lets legitimately long
+snapshots complete under short intervals — and the daily price refresh is
+bounded by its own 10-minute deadline. All GCP/Prometheus HTTP clients have
+request timeouts, so a hung backend cannot wedge the loop.
+
+Known limitation: the elapsed-time window is tracked in process memory, so
+the first snapshot after a restart covers only the nominal interval — cost
+incurred while the daemon was down is not retroactively recorded.
 
 #### Edge cases
 - **Empty snapshot list**: `Write()` returns nil immediately (no API call).

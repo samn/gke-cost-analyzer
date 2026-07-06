@@ -3,6 +3,7 @@ package prometheus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -493,5 +494,33 @@ func TestGMPBaseURLUsedByClient(t *testing.T) {
 	wantPath := "/v1/projects/my-project/location/global/prometheus/api/v1/query"
 	if requestedPath != wantPath {
 		t.Errorf("request path = %q, want %q", requestedPath, wantPath)
+	}
+}
+
+func TestDefaultClientHasTimeout(t *testing.T) {
+	// A hung Prometheus endpoint must not stall snapshots indefinitely.
+	c := NewClient("http://prom.example")
+	if c.httpClient.Timeout == 0 {
+		t.Error("prometheus default client has no timeout")
+	}
+}
+
+func TestBaseURLTrailingSlash(t *testing.T) {
+	// A custom --prometheus-url with a trailing slash must not produce a
+	// double-slash query path (some servers 404 on //api/v1/query).
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL + "/")
+	if _, err := c.FetchUsage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/v1/query" {
+		t.Errorf("query path = %q, want /api/v1/query", gotPath)
 	}
 }

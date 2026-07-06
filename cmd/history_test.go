@@ -90,27 +90,56 @@ func TestHistoryAllClustersWithClusterNameError(t *testing.T) {
 	}
 }
 
-func TestResolveClusterFilter(t *testing.T) {
+func TestResolveClusterView(t *testing.T) {
 	tests := []struct {
-		name         string
-		autoDetected string
-		explicit     string
-		allClusters  bool
-		want         string
+		name        string
+		autoDetect  string
+		explicit    string
+		allClusters bool
+		wantFilter  string
+		wantShowCol bool
 	}{
-		{"default uses auto-detected", "auto-detected", "", false, "auto-detected"},
-		{"explicit overrides auto-detected", "auto-detected", "explicit", false, "explicit"},
-		{"all-clusters clears filter", "auto-detected", "", true, ""},
-		{"all-clusters overrides explicit", "auto-detected", "explicit", true, ""},
-		{"no auto-detection and no flags queries all", "", "", false, ""},
+		{"explicit wins", "detected", "explicit", false, "explicit", false},
+		{"autodetected", "detected", "", false, "detected", false},
+		{"all clusters", "detected", "", true, "", true},
+		// When nothing is detected and no flag is given, the query silently
+		// spans every cluster — the CLUSTER column must be shown so blended
+		// data is identifiable.
+		{"detection failed", "", "", false, "", true},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveClusterFilter(tt.autoDetected, tt.explicit, tt.allClusters)
-			if got != tt.want {
-				t.Errorf("resolveClusterFilter(%q, %q, %v) = %q, want %q",
-					tt.autoDetected, tt.explicit, tt.allClusters, got, tt.want)
+			filter, showCol := resolveClusterView(tt.autoDetect, tt.explicit, tt.allClusters)
+			if filter != tt.wantFilter {
+				t.Errorf("filter = %q, want %q", filter, tt.wantFilter)
+			}
+			if showCol != tt.wantShowCol {
+				t.Errorf("showCol = %v, want %v", showCol, tt.wantShowCol)
 			}
 		})
+	}
+}
+
+func TestParseHistoryDurationRejectsOverflow(t *testing.T) {
+	// Absurd values would overflow int64 nanoseconds and produce a negative
+	// duration (breaking the SQL time filter); they must be rejected.
+	if _, err := parseHistoryDuration("99999999999w"); err == nil {
+		t.Error("expected error for overflowing duration")
+	}
+	if _, err := parseHistoryDuration("60w"); err != nil {
+		t.Errorf("one year of weeks should be accepted, got %v", err)
+	}
+}
+
+func TestHistoryArgsErrorsAreUsageErrors(t *testing.T) {
+	// A missing duration argument is an operator mistake, not an application
+	// error to report to Sentry.
+	err := historyCmd.Args(historyCmd, []string{})
+	if err == nil {
+		t.Fatal("expected error for missing duration argument")
+	}
+	if !IsUsageError(err) {
+		t.Errorf("missing argument should classify as a usage error, got %T", err)
 	}
 }

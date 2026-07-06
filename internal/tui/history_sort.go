@@ -13,6 +13,7 @@ const (
 	HistSortByCluster HistSortColumn = iota
 	HistSortByTeam
 	HistSortByWorkload
+	HistSortByNamespace
 	HistSortBySubtype
 	HistSortByMode
 	HistSortByAvgPods
@@ -42,6 +43,9 @@ func historyVisibleColumns(vis ColumnVisibility) []historyColumnDef {
 		historyColumnDef{header: "TEAM", sortCol: HistSortByTeam, sortable: true, helpName: "Team"},
 		historyColumnDef{header: "WORKLOAD", sortCol: HistSortByWorkload, sortable: true, helpName: "Workload"},
 	)
+	if vis.Namespace {
+		cols = append(cols, historyColumnDef{header: "NAMESPACE", sortCol: HistSortByNamespace, sortable: true, helpName: "Ns"})
+	}
 	if vis.Subtype {
 		cols = append(cols, historyColumnDef{header: "SUBTYPE", sortCol: HistSortBySubtype, sortable: true, helpName: "Subtype"})
 	}
@@ -114,6 +118,8 @@ func histCompareByColumn(a, b bigquery.HistoryCostRow, col HistSortColumn) int {
 		return compareStr(a.Team, b.Team)
 	case HistSortByWorkload:
 		return compareStr(a.Workload, b.Workload)
+	case HistSortByNamespace:
+		return compareStr(a.Namespace, b.Namespace)
 	case HistSortBySubtype:
 		return compareStr(a.Subtype, b.Subtype)
 	case HistSortByMode:
@@ -188,7 +194,7 @@ func SortHistoryTeamGroups(groups []HistoryTeamGroup, cfg HistorySortConfig) {
 	}
 }
 
-// HistoryColumnForKey maps a number key press to a history sort column.
+// HistoryColumnForKey maps a sort key press to a history sort column.
 func HistoryColumnForKey(key rune, vis ColumnVisibility) (HistSortColumn, bool) {
 	defs := historyVisibleColumns(vis)
 
@@ -199,11 +205,8 @@ func HistoryColumnForKey(key rune, vis ColumnVisibility) (HistSortColumn, bool) 
 		}
 	}
 
-	idx := int(key-'1') % 10
-	if key == '0' {
-		idx = 9
-	}
-	if idx < 0 || idx >= len(cols) {
+	idx, ok := sortKeyIndex(key)
+	if !ok || idx >= len(cols) {
 		return 0, false
 	}
 	return cols[idx], true

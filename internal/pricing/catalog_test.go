@@ -386,31 +386,42 @@ func TestExtractAutopilotPricesNonMatchingSKU(t *testing.T) {
 }
 
 func TestExtractAutopilotPricesMultiplePricingInfos(t *testing.T) {
-	// SKU with multiple PricingInfo entries — each should produce a price.
+	// PricingInfo is a list of timestamped pricing records. Only the entry
+	// with the latest effectiveTime is current — emitting one price per
+	// entry let a stale rate win depending on slice order.
 	sku := catalogSKU{
 		Description: "Autopilot Pod mCPU Requests",
 		GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
 		PricingInfo: []skuPricingInfo{
-			{PricingExpression: pricingExpression{
-				TieredRates: []tieredRate{
-					{UnitPrice: unitPrice{Nanos: 35000}},
+			{
+				EffectiveTime: "2025-01-01T00:00:00Z",
+				PricingExpression: pricingExpression{
+					TieredRates: []tieredRate{
+						{UnitPrice: unitPrice{Nanos: 40000}},
+					},
 				},
-			}},
-			{PricingExpression: pricingExpression{
-				TieredRates: []tieredRate{
-					{UnitPrice: unitPrice{Nanos: 40000}},
+			},
+			{
+				// Older record listed last — must NOT win.
+				EffectiveTime: "2024-01-01T00:00:00Z",
+				PricingExpression: pricingExpression{
+					TieredRates: []tieredRate{
+						{UnitPrice: unitPrice{Nanos: 35000}},
+					},
 				},
-			}},
+			},
 		},
 	}
 
 	prices := extractAutopilotPrices(sku)
-	// Each PricingInfo × each region = 2 prices
-	if len(prices) != 2 {
-		t.Fatalf("expected 2 prices (one per PricingInfo), got %d", len(prices))
+	if len(prices) != 1 {
+		t.Fatalf("expected 1 price (latest PricingInfo only), got %d", len(prices))
+	}
+	if prices[0].UnitPrice != 40000.0/1e9 {
+		t.Errorf("unit price = %v, want the newest record (40000 nanos)", prices[0].UnitPrice)
 	}
 	if prices[0].ResourceType != CPU || prices[0].Tier != OnDemand {
-		t.Errorf("first price should be CPU/OnDemand, got %s/%s", prices[0].ResourceType, prices[0].Tier)
+		t.Errorf("price should be CPU/OnDemand, got %s/%s", prices[0].ResourceType, prices[0].Tier)
 	}
 }
 
@@ -431,5 +442,37 @@ func TestExtractAutopilotPricesEmptyRegionsAndServiceRegions(t *testing.T) {
 	prices := extractAutopilotPrices(sku)
 	if len(prices) != 0 {
 		t.Errorf("expected 0 prices when both Regions and ServiceRegions are empty, got %d", len(prices))
+	}
+}
+
+func TestCurrentPricingInfoTimestampForms(t *testing.T) {
+	// effectiveTime is a protobuf Timestamp JSON encoding, which may carry
+	// fractional seconds. Lexical comparison sorts "...00.5Z" BEFORE
+	// "...01Z" incorrectly ('.' < any digit is fine, but '.5Z' vs 'Z' at the
+	// same prefix breaks: '2025-01-01T00:00:00.5Z' > '2025-01-01T00:00:00Z'
+	// lexically is false since '.' < 'Z'), so timestamps must be parsed.
+	older := skuPricingInfo{
+		EffectiveTime: "2025-01-01T00:00:00Z",
+		PricingExpression: pricingExpression{
+			TieredRates: []tieredRate{{UnitPrice: unitPrice{Nanos: 111}}},
+		},
+	}
+	newer := skuPricingInfo{
+		EffectiveTime: "2025-01-01T00:00:00.500Z", // half a second LATER
+		PricingExpression: pricingExpression{
+			TieredRates: []tieredRate{{UnitPrice: unitPrice{Nanos: 222}}},
+		},
+	}
+
+	got := currentPricingInfo([]skuPricingInfo{older, newer})
+	if got.EffectiveTime != newer.EffectiveTime {
+		t.Errorf("selected %q, want the fractional-second later record %q", got.EffectiveTime, newer.EffectiveTime)
+	}
+
+	// Records without a parseable effectiveTime lose to parseable ones.
+	unparseable := skuPricingInfo{EffectiveTime: ""}
+	got = currentPricingInfo([]skuPricingInfo{unparseable, older})
+	if got.EffectiveTime != older.EffectiveTime {
+		t.Errorf("selected %q, want the parseable record", got.EffectiveTime)
 	}
 }

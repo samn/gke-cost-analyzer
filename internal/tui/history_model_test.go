@@ -247,20 +247,20 @@ func TestHistoryModelSparklines(t *testing.T) {
 	m := testHistoryModel(&mockFetcher{})
 
 	key := bigquery.WorkloadKey{Team: "platform", Workload: "web"}
+	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	series := make([]bigquery.TimeSeriesPoint, 8)
+	for i := range series {
+		series[i] = bigquery.TimeSeriesPoint{
+			Key:        key,
+			Bucket:     base.Add(time.Duration(i) * time.Hour),
+			BucketCost: float64(i),
+		}
+	}
 	msg := historyDataMsg{
 		rows: []bigquery.HistoryCostRow{
 			{Team: "platform", Workload: "web", TotalCost: 10},
 		},
-		series: []bigquery.TimeSeriesPoint{
-			{Key: key, BucketCost: 0},
-			{Key: key, BucketCost: 1},
-			{Key: key, BucketCost: 2},
-			{Key: key, BucketCost: 3},
-			{Key: key, BucketCost: 4},
-			{Key: key, BucketCost: 5},
-			{Key: key, BucketCost: 6},
-			{Key: key, BucketCost: 7},
-		},
+		series: series,
 	}
 
 	updated, _ := m.Update(msg)
@@ -399,5 +399,46 @@ func TestHistoryModelSingleClusterHeader(t *testing.T) {
 	}
 	if strings.Contains(view, "CLUSTER") {
 		t.Error("view should NOT contain CLUSTER column header when showCluster=false")
+	}
+}
+
+func TestHistoryNamespaceColumnShownForMultiNamespaceRows(t *testing.T) {
+	m := testHistoryModel(&mockFetcher{})
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{Team: "a", Workload: "web", Namespace: "prod", TotalCost: 5},
+			{Team: "a", Workload: "web", Namespace: "staging", TotalCost: 3},
+		},
+	}
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	if !hm.vis.Namespace {
+		t.Fatal("multi-namespace rows should enable the NAMESPACE column")
+	}
+	// Flat view so workload rows (and their namespace cells) are visible.
+	updated, _ = hm.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
+	hm = updated.(HistoryModel)
+	view := hm.View().Content
+	if !strings.Contains(view, "NAMESPACE") || !strings.Contains(view, "staging") {
+		t.Errorf("namespace column/values missing from view:\n%s", view)
+	}
+}
+
+func TestHistoryNamespaceColumnHiddenForSingleNamespace(t *testing.T) {
+	m := testHistoryModel(&mockFetcher{})
+
+	msg := historyDataMsg{
+		rows: []bigquery.HistoryCostRow{
+			{Team: "a", Workload: "web", Namespace: "default", TotalCost: 5},
+			{Team: "b", Workload: "api", Namespace: "default", TotalCost: 3},
+		},
+	}
+	updated, _ := m.Update(msg)
+	hm := updated.(HistoryModel)
+
+	if hm.vis.Namespace {
+		t.Error("single-namespace rows should not enable the NAMESPACE column")
 	}
 }

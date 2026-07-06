@@ -8,9 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- **Namespace is now part of the aggregation group identity**: pods in different namespaces with identical labels are recorded as separate groups, and the `namespace` column is deterministic (previously it came from whichever pod was listed first). Both history queries now group by namespace so table rows and sparklines agree.
+- **Standard-mode node cost is based on `Capacity` instead of `Allocatable`**, matching what GCE actually bills. Standard-mode dollar figures increase accordingly (previously understated by up to ~20% on memory for small nodes).
+- Native sidecar containers (init containers with `restartPolicy: Always`) now count toward pod resource requests — Autopilot bills them and they consume node resources. Classic init containers remain excluded.
+- `record` snapshots now cover the actual elapsed time since the last successful snapshot instead of the nominal interval, so missed or slow ticks no longer permanently undercount recorded cost.
+- `record` refreshes cached prices every 24h instead of using launch-time prices for the daemon's lifetime.
+- The history `AVG $/HR` is computed from the covered time (`SUM(interval_seconds)` over per-snapshot windows) instead of the snapshot timestamp span, removing a systematic overestimate and the $0/hr result for single-snapshot workloads. The aggregated query collapses spot/on-demand sibling rows per snapshot first, so mixed workloads no longer double-count covered time (halving $/hr) or understate AVG PODS/CPU/MEM.
+- The `record` per-snapshot deadline is floored at 2 minutes (a short `--interval` could otherwise cancel every legitimately long snapshot forever) and the daily price refresh runs under its own 10-minute bound.
+- `setup` command description and README reflect schema migration; `history --help` documents the 5-year duration cap.
+- `history` shows the CLUSTER column (with a warning) when cluster auto-detection fails and no `--cluster-name` is given, instead of silently blending clusters.
 - Upgraded all GitHub Actions to latest major versions and pinned to commit SHAs: `actions/checkout` v4 → v6, `actions/cache` v4 → v5, `jdx/mise-action` v2 → v4, `softprops/action-gh-release` v2 → v3, `docker/login-action` v3 → v4, `docker/setup-buildx-action` v3 → v4, `docker/build-push-action` v6 → v7
 
+### Added
+- NAMESPACE column in `watch` and `history`, shown automatically when rows span more than one namespace (namespace is part of the group identity; without the column, identical-label workloads in different namespaces looked like duplicate rows). Sortable like the other columns.
+- Event-log scrollback in `watch`: `[` scrolls into history, `]` back toward the newest events (previously documented but not implemented).
+- Sort keys `-` and `=` reach the 11th+ sortable columns (WASTE was unreachable with all optional columns enabled, and the help footer advertised a nonexistent "11=" key).
+- `setup` migrates existing tables: missing NULLABLE columns (e.g. `cost_mode`, utilization fields) are added via schema PATCH instead of leaving inserts failing forever.
+
 ### Fixed
+- **BigQuery rows could be silently dropped**: the streaming-insert dedup ID was a hyphen-joined concatenation of label values, so distinct groups (e.g. team `a`/workload `b-c` vs team `a-b`/workload `c`) could collide and BigQuery would discard one row. IDs are now collision-free hashes, also fixing a potential 128-byte insertId limit violation with long labels.
+- **`--namespace` no longer corrupts standard-mode cost attribution**: per-node cost shares are computed from all pods on each node, with the namespace filter applied after cost calculation (previously a single filtered pod could absorb an entire node's cost).
+- Compute Engine SKU matching no longer conflates variant SKUs ("N2 Custom", "Sole Tenancy") with the plain family price, and covers previously missing families (M1, M2, M4, C4D, H4D) plus older description forms ("Compute optimized" → c2, "Memory-optimized Instance" → m1). Duplicate price-table keys now resolve deterministically (first wins) and the newest `PricingInfo` record is used instead of a slice-order-dependent one.
+- History queries follow BigQuery result pagination; results beyond the first 10,000 rows (easily exceeded by sparkline data) were silently truncated.
+- History filter values travel as BigQuery named query parameters; the old single-quote-only escaping broke (and permitted injection into) queries for values containing backslashes. Dataset/table/project identifiers are validated.
+- Rows recorded before the `cost_mode` column existed are treated as `autopilot` in history queries (per SPEC) instead of appearing as a separate blank-mode group.
+- All commands trap SIGTERM (what Kubernetes sends) in addition to SIGINT, so the `record` daemon shuts down gracefully in-cluster.
+- All GCP/Prometheus HTTP clients have a 30s timeout and each `record` snapshot is bounded by the interval; a hung backend can no longer wedge the daemon silently and permanently.
+- Parquet appends and price-cache writes go through temp-file + rename; a crash mid-write can no longer destroy previously recorded snapshots or leave a torn cache file.
+- Autopilot and Compute Engine price caches use separate default files; sharing one file silently corrupted whichever loaded second.
+- Trend detection: `--trend-threshold 0` is honored as "disabled" inside the tracker itself, and a large workload crashing to near-zero cost is now flagged (the noise floor previously masked big drops).
+- Watch TUI: the cursor is clamped when a refresh removes rows (previously the selection could vanish and navigation keys stopped responding).
+- History sparklines zero-fill missing time buckets instead of compressing gaps into a misleading contiguous trend.
+- Environment detection is skipped when `--region`, `--project`, and `--cluster-name` are all set, runs its metadata lookups concurrently, and is bypassed entirely by `version` (previously every command paid up to ~3s of metadata timeouts off-GCP).
+- Flag/validation mistakes (e.g. missing `--region`) are no longer reported to Sentry as application errors.
+- Event log formatting: zero-rounding changes no longer print "+0%", and ages over a day render as "2d ago".
+- `history` durations are capped at 5 years, preventing an int64 overflow that produced a broken SQL time filter.
+- A custom `--prometheus-url` with a trailing slash no longer produces a double-slash query path.
+- Aggregation output order is deterministic (sorted by group key) instead of map-iteration order.
 - README: Go version prerequisite updated from 1.25+ to 1.26+ to match go.mod
 - README: Docker section updated to reflect current Dockerfile (copies pre-built binary) and added GHCR pull instructions
 - README: Features list updated with all current capabilities (history, utilization, aberration detection, unmatched-pods, env auto-detection, namespace exclusion)

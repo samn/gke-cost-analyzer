@@ -30,8 +30,12 @@ var rootCmd = &cobra.Command{
 	Short: "Analyze costs of GKE workloads",
 	Long:  "A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard), with support for real-time display and BigQuery export.",
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-		d := newDetector()
-		applyDefaults(d, cmd)
+		// version needs no cluster/project context; skip detection so it
+		// never blocks on metadata-server timeouts off-GCP.
+		if cmd.Name() != "version" {
+			d := newDetector()
+			applyDefaults(d, cmd)
+		}
 		if err := validateMode(); err != nil {
 			return err
 		}
@@ -52,8 +56,13 @@ func init() {
 }
 
 // applyDefaults fills in missing flag values from environment detection.
-// Explicit CLI flags (non-empty values) are never overwritten.
+// Explicit CLI flags (non-empty values) are never overwritten. Detection is
+// skipped entirely when every value is already set — it costs up to three
+// metadata-server round trips (1s timeout each when off-GCP).
 func applyDefaults(d *envdefaults.Detector, cmd *cobra.Command) {
+	if region != "" && project != "" && clusterName != "" {
+		return
+	}
 	defaults := d.Detect()
 
 	var applied []string
@@ -92,11 +101,15 @@ func validateMode() error {
 	case "autopilot", "standard", "all":
 		return nil
 	default:
-		return fmt.Errorf("--mode must be one of: autopilot, standard, all (got %q)", mode)
+		return usageErrorf("--mode must be one of: autopilot, standard, all (got %q)", mode)
 	}
 }
 
 // Execute runs the root command.
 func Execute() error {
+	// Flag-parse failures are operator input mistakes, not application errors.
+	rootCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return usageError{err}
+	})
 	return rootCmd.Execute()
 }

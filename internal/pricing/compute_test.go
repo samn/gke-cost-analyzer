@@ -333,3 +333,98 @@ func TestExtractComputePricesArchQualifier(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractComputePricesRealCatalogDescriptions(t *testing.T) {
+	// Descriptions as they appear in the real Cloud Billing catalog —
+	// including shapes that don't carry the family token and qualifier words
+	// beyond the AMD/Arm arch markers.
+	tests := []struct {
+		desc   string
+		family string
+		tier   Tier
+		rt     ResourceType
+	}{
+		{"N1 Predefined Instance Core running in Americas", "n1", OnDemand, CPU},
+		{"Compute optimized Core running in Americas", "c2", OnDemand, CPU},
+		{"Spot Preemptible Compute optimized Ram running in Americas", "c2", Spot, Memory},
+		{"Memory-optimized Instance Core running in Americas", "m1", OnDemand, CPU},
+		{"Memory-optimized Instance Ram running in Americas", "m1", OnDemand, Memory},
+		{"M3 Memory-optimized Instance Core running in Americas", "m3", OnDemand, CPU},
+		{"C4D AMD Instance Core running in Americas", "c4d", OnDemand, CPU},
+		{"M4 Instance Core running in Americas", "m4", OnDemand, CPU},
+		{"H4D Instance Core running in Americas", "h4d", OnDemand, CPU},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			sku := catalogSKU{
+				Description: tt.desc,
+				GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
+				PricingInfo: []skuPricingInfo{
+					{PricingExpression: pricingExpression{
+						TieredRates: []tieredRate{
+							{UnitPrice: unitPrice{Nanos: 10000000}},
+						},
+					}},
+				},
+			}
+
+			prices := extractComputePrices(sku)
+			if len(prices) != 1 {
+				t.Fatalf("expected 1 price, got %d", len(prices))
+			}
+			if prices[0].MachineFamily != tt.family {
+				t.Errorf("family = %s, want %s", prices[0].MachineFamily, tt.family)
+			}
+			if prices[0].Tier != tt.tier {
+				t.Errorf("tier = %s, want %s", prices[0].Tier, tt.tier)
+			}
+			if prices[0].ResourceType != tt.rt {
+				t.Errorf("resource = %s, want %s", prices[0].ResourceType, tt.rt)
+			}
+		})
+	}
+}
+
+func TestExtractComputePricesRejectsCustomAndSoleTenancy(t *testing.T) {
+	// Custom and sole-tenancy SKUs have different pricing and must not be
+	// conflated with (or clobber) the predefined family price.
+	descs := []string{
+		"N2 Custom Instance Core running in Americas",
+		"Spot Preemptible N2 Custom Instance Ram running in Americas",
+		"E2 Custom Instance Core running in Americas",
+		"Custom Instance Core running in Americas",          // bare custom (N1)
+		"Sole Tenancy Instance N2 Core running in Americas", // sole tenancy
+		"N1 Sole Tenancy Instance Core running in Americas", // qualifier form
+	}
+
+	for _, desc := range descs {
+		sku := catalogSKU{
+			Description: desc,
+			GeoTaxonomy: geoTaxonomy{Regions: []string{"us-central1"}},
+			PricingInfo: []skuPricingInfo{
+				{PricingExpression: pricingExpression{
+					TieredRates: []tieredRate{
+						{UnitPrice: unitPrice{Nanos: 10000000}},
+					},
+				}},
+			},
+		}
+		if prices := extractComputePrices(sku); len(prices) != 0 {
+			t.Errorf("%q: expected no prices, got %+v", desc, prices)
+		}
+	}
+}
+
+func TestFromComputePricesFirstWins(t *testing.T) {
+	// Duplicate keys must resolve deterministically to the first price seen
+	// rather than whatever SKU happens to come last in the catalog pages.
+	prices := []ComputePrice{
+		{Region: "us-central1", MachineFamily: "n2", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.031},
+		{Region: "us-central1", MachineFamily: "n2", ResourceType: CPU, Tier: OnDemand, UnitPrice: 0.099},
+	}
+	cpt := FromComputePrices(prices)
+	if got := cpt.Lookup("us-central1", "n2", CPU, OnDemand); got != 0.031 {
+		t.Errorf("Lookup = %f, want first price 0.031", got)
+	}
+}

@@ -32,7 +32,7 @@ func WithSetupBaseURL(url string) SetupOption {
 // NewSetupClient creates a new SetupClient.
 func NewSetupClient(project string, opts ...SetupOption) *SetupClient {
 	sc := &SetupClient{
-		httpClient: http.DefaultClient,
+		httpClient: newDefaultHTTPClient(),
 		project:    project,
 		baseURL:    bigqueryAPIBase,
 	}
@@ -148,13 +148,90 @@ func (sc *SetupClient) EnsureTable(ctx context.Context, dataset, table string) e
 	}
 	defer resp.Body.Close()
 
-	// 409 = already exists, which is fine
+	// 409 = already exists; migrate its schema if columns were added since.
 	if resp.StatusCode == http.StatusConflict {
-		return nil
+		return sc.migrateTableSchema(ctx, dataset, table)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("create table returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// migrateTableSchema adds columns from TableSchema() that are missing from an
+// existing table. Without this, a table created by an older version silently
+// rejects every insert that populates newer columns. BigQuery only permits
+// additive NULLABLE columns on existing tables; anything else is an error.
+func (sc *SetupClient) migrateTableSchema(ctx context.Context, dataset, table string) error {
+	tableURL := fmt.Sprintf("%s/projects/%s/datasets/%s/tables/%s", sc.baseURL, sc.project, dataset, table)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tableURL, nil)
+	if err != nil {
+		return fmt.Errorf("creating table get request: %w", err)
+	}
+	resp, err := sc.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching existing table: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("get table returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var existing struct {
+		Schema tableSchemaWrapper `json:"schema"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&existing); err != nil {
+		return fmt.Errorf("decoding existing table: %w", err)
+	}
+
+	have := make(map[string]bool, len(existing.Schema.Fields))
+	for _, f := range existing.Schema.Fields {
+		have[f.Name] = true
+	}
+
+	var missing []FieldSchema
+	for _, f := range TableSchema() {
+		if have[f.Name] {
+			continue
+		}
+		if f.Mode == "REQUIRED" {
+			return fmt.Errorf("existing table %s.%s is missing REQUIRED column %q; BigQuery cannot add it in place — recreate the table or migrate manually", dataset, table, f.Name)
+		}
+		missing = append(missing, f)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	patchBody := struct {
+		Schema tableSchemaWrapper `json:"schema"`
+	}{Schema: tableSchemaWrapper{Fields: append(existing.Schema.Fields, missing...)}}
+
+	data, err := json.Marshal(patchBody)
+	if err != nil {
+		return fmt.Errorf("marshaling schema patch: %w", err)
+	}
+
+	patchReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, tableURL, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("creating schema patch request: %w", err)
+	}
+	patchReq.Header.Set("Content-Type", "application/json")
+
+	patchResp, err := sc.httpClient.Do(patchReq)
+	if err != nil {
+		return fmt.Errorf("patching table schema: %w", err)
+	}
+	defer patchResp.Body.Close()
+
+	if patchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(patchResp.Body)
+		return fmt.Errorf("patch table schema returned status %d: %s", patchResp.StatusCode, string(body))
 	}
 
 	return nil

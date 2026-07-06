@@ -189,13 +189,13 @@ func TestQueryAggregatedCostsWithFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(receivedSQL, "cluster_name = 'prod-cluster'") {
+	if !strings.Contains(receivedSQL, "cluster_name = @cluster_name") {
 		t.Errorf("SQL should contain cluster filter, got: %s", receivedSQL)
 	}
-	if !strings.Contains(receivedSQL, "namespace = 'default'") {
+	if !strings.Contains(receivedSQL, "namespace = @namespace") {
 		t.Errorf("SQL should contain namespace filter, got: %s", receivedSQL)
 	}
-	if !strings.Contains(receivedSQL, "team = 'platform'") {
+	if !strings.Contains(receivedSQL, "team = @team") {
 		t.Errorf("SQL should contain team filter, got: %s", receivedSQL)
 	}
 }
@@ -254,21 +254,26 @@ func TestQueryTimeSeries(t *testing.T) {
 		if !strings.Contains(req.Query, "DIV(UNIX_SECONDS(timestamp), 3600)") {
 			t.Errorf("SQL should contain bucket expression, got: %s", req.Query)
 		}
+		// Namespace is part of the workload identity, so the time-series
+		// query must group by it (matching the aggregated query).
+		if !strings.Contains(req.Query, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), bucket") {
+			t.Errorf("SQL should group by namespace and normalized cost_mode, got: %s", req.Query)
+		}
 
 		resp := queryResponse{
 			JobComplete: true,
 			TotalRows:   "3",
 			Rows: []responseRow{
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050464e+09"}, {V: "0.50"},
 				}},
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050500e+09"}, {V: "0.75"},
 				}},
 				{F: []responseCell{
-					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "autopilot"},
+					{V: "prod-cluster"}, {V: "platform"}, {V: "web"}, {V: ""}, {V: "default"}, {V: "autopilot"},
 					{V: "1.7050536e+09"}, {V: "1.00"},
 				}},
 			},
@@ -293,6 +298,9 @@ func TestQueryTimeSeries(t *testing.T) {
 	}
 	if points[0].Key.Team != "platform" || points[0].Key.Workload != "web" {
 		t.Errorf("unexpected key: %+v", points[0].Key)
+	}
+	if points[0].Key.Namespace != "default" {
+		t.Errorf("namespace = %s, want default", points[0].Key.Namespace)
 	}
 	if points[0].BucketCost != 0.50 {
 		t.Errorf("bucket_cost = %f, want 0.50", points[0].BucketCost)
@@ -354,29 +362,221 @@ func TestQueryEmptyResults(t *testing.T) {
 }
 
 func TestBuildFilterClause(t *testing.T) {
-	// Empty filters — no clause
-	got := buildFilterClause(QueryFilters{})
-	if got != "" {
-		t.Errorf("empty filters should produce empty clause, got %q", got)
+	// Empty filters — no clause, no params
+	clause, params := buildFilterClause(QueryFilters{})
+	if clause != "" || len(params) != 0 {
+		t.Errorf("empty filters should produce empty clause/params, got %q / %v", clause, params)
 	}
 
-	// Single cluster filter
-	got = buildFilterClause(QueryFilters{ClusterName: "prod"})
-	if !strings.Contains(got, "cluster_name = 'prod'") {
-		t.Errorf("single cluster filter expected, got %q", got)
+	// Single cluster filter — named parameter, not interpolated value
+	clause, params = buildFilterClause(QueryFilters{ClusterName: "prod"})
+	if !strings.Contains(clause, "cluster_name = @cluster_name") {
+		t.Errorf("expected parameterized cluster filter, got %q", clause)
+	}
+	if len(params) != 1 || params[0].Name != "cluster_name" || params[0].ParameterValue.Value != "prod" {
+		t.Errorf("unexpected params: %+v", params)
 	}
 
 	// All filters
-	got = buildFilterClause(QueryFilters{ClusterName: "prod", Namespace: "default", Team: "platform"})
-	if !strings.Contains(got, "cluster_name = 'prod'") || !strings.Contains(got, "namespace = 'default'") || !strings.Contains(got, "team = 'platform'") {
-		t.Errorf("all filters expected, got %q", got)
+	clause, params = buildFilterClause(QueryFilters{ClusterName: "prod", Namespace: "default", Team: "platform"})
+	if !strings.Contains(clause, "cluster_name = @cluster_name") ||
+		!strings.Contains(clause, "namespace = @namespace") ||
+		!strings.Contains(clause, "team = @team") {
+		t.Errorf("all filters expected, got %q", clause)
+	}
+	if len(params) != 3 {
+		t.Errorf("expected 3 params, got %+v", params)
 	}
 }
 
-func TestEscapeSQLString(t *testing.T) {
-	got := escapeSQLString("O'Brien")
-	want := "O\\'Brien"
-	if got != want {
-		t.Errorf("escapeSQLString = %q, want %q", got, want)
+func TestQueryFiltersNotInterpolated(t *testing.T) {
+	// Filter values with SQL metacharacters must travel as query parameters,
+	// never appear in the SQL text (the old escaping missed backslashes:
+	// a value ending in \ escaped the closing quote).
+	var receivedReq queryRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedReq)
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	hostile := `evil\' OR '1'='1`
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour),
+		QueryFilters{Team: hostile})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(receivedReq.Query, "evil") {
+		t.Errorf("filter value leaked into SQL text: %s", receivedReq.Query)
+	}
+	if receivedReq.ParameterMode != "NAMED" {
+		t.Errorf("parameterMode = %q, want NAMED", receivedReq.ParameterMode)
+	}
+	found := false
+	for _, p := range receivedReq.QueryParameters {
+		if p.Name == "team" && p.ParameterValue.Value == hostile {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("team parameter missing, got %+v", receivedReq.QueryParameters)
+	}
+}
+
+func TestReaderRejectsInvalidIdentifiers(t *testing.T) {
+	// Project/dataset/table are interpolated into the table reference and
+	// must be validated as identifiers.
+	reader := NewReader("proj", "ds`; DROP TABLE x;--", "tbl")
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Errorf("expected invalid-identifier error, got %v", err)
+	}
+
+	reader = NewReader("proj", "ds", "tbl")
+	if err := reader.validateIdentifiers(); err != nil {
+		t.Errorf("valid identifiers rejected: %v", err)
+	}
+}
+
+func TestQueryAggregatedCostsSQLShape(t *testing.T) {
+	var receivedSQL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedSQL = req.Query
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	_, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// avg $/hr must divide by the covered time (SUM of interval windows),
+	// not MAX-MIN of snapshot timestamps: that has a fencepost error (N
+	// intervals of cost over an N-1 interval span) and yields NULL→0 for
+	// single-snapshot groups.
+	if !strings.Contains(receivedSQL, "SUM(interval_seconds)") {
+		t.Errorf("avg_cost_per_hour should divide by SUM(interval_seconds), got: %s", receivedSQL)
+	}
+	if strings.Contains(receivedSQL, "TIMESTAMP_DIFF(MAX(timestamp), MIN(timestamp)") {
+		t.Errorf("avg_cost_per_hour still uses timestamp-span denominator: %s", receivedSQL)
+	}
+	// Rows written before the cost_mode column existed are autopilot.
+	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
+		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
+	}
+	// The grouping must use the IFNULL expression, not the bare column name:
+	// a bare `GROUP BY cost_mode` next to an identically-named SELECT alias
+	// is at best ambiguous, and grouping on the raw column would keep legacy
+	// NULL rows in a separate group that then displays as a duplicate
+	// 'autopilot' row.
+	if !strings.Contains(receivedSQL, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), timestamp") {
+		t.Errorf("per-snapshot grouping should group by the IFNULL expression and timestamp, got: %s", receivedSQL)
+	}
+	// Record writes one row per is_spot value per snapshot. Summing
+	// interval_seconds across those sibling rows would double-count the
+	// covered time (halving $/hr) and distort the AVG columns, so rows must
+	// first collapse per snapshot timestamp before the range aggregation.
+	if !strings.Contains(receivedSQL, "WITH per_snapshot AS") || !strings.Contains(receivedSQL, "FROM per_snapshot") {
+		t.Errorf("expected two-level aggregation via per_snapshot CTE, got: %s", receivedSQL)
+	}
+	if !strings.Contains(receivedSQL, "ANY_VALUE(interval_seconds)") {
+		t.Errorf("interval_seconds must be taken once per snapshot, not summed across sibling rows, got: %s", receivedSQL)
+	}
+}
+
+func TestQueryTimeSeriesNormalizesCostMode(t *testing.T) {
+	var receivedSQL string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedSQL = req.Query
+		json.NewEncoder(w).Encode(queryResponse{JobComplete: true, TotalRows: "0"})
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	_, err := reader.QueryTimeSeries(context.Background(), time.Now().Add(-time.Hour), 300, QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(receivedSQL, "IFNULL(cost_mode, 'autopilot')") {
+		t.Errorf("cost_mode should be normalized with IFNULL, got: %s", receivedSQL)
+	}
+	// Group by the IFNULL expression, not the bare (ambiguous) column name.
+	if !strings.Contains(receivedSQL, "GROUP BY cluster_name, team, workload, subtype, namespace, IFNULL(cost_mode, 'autopilot'), bucket") {
+		t.Errorf("time-series grouping should use the IFNULL expression, got: %s", receivedSQL)
+	}
+}
+
+func TestQueryFollowsPagination(t *testing.T) {
+	// Results beyond the first page must be fetched via pageToken, not
+	// silently truncated.
+	makeRow := func(team string, cost string) responseRow {
+		return responseRow{F: []responseCell{
+			{V: "c"}, {V: team}, {V: "w"}, {V: ""}, {V: "ns"}, {V: "autopilot"},
+			{V: "false"}, {V: "1"}, {V: "1"}, {V: "1"},
+			{V: cost}, {V: "1"}, {V: "1"}, {V: "1"}, {V: "0"},
+			{V: nil}, {V: nil}, {V: nil},
+		}}
+	}
+
+	var pageRequests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pageRequests = append(pageRequests, r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodPost {
+			// First page: one row + a pageToken pointing at the rest.
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete":  true,
+				"totalRows":    "3",
+				"pageToken":    "page2",
+				"jobReference": map[string]string{"projectId": "proj", "jobId": "job123", "location": "US"},
+				"rows":         []responseRow{makeRow("team-a", "1.0")},
+			})
+			return
+		}
+
+		// Paginated GET for subsequent pages.
+		if !strings.Contains(r.URL.Path, "job123") {
+			t.Errorf("expected jobId in path, got %s", r.URL.Path)
+		}
+		switch r.URL.Query().Get("pageToken") {
+		case "page2":
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete": true,
+				"pageToken":   "page3",
+				"rows":        []responseRow{makeRow("team-b", "2.0")},
+			})
+		case "page3":
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobComplete": true,
+				"rows":        []responseRow{makeRow("team-c", "3.0")},
+			})
+		default:
+			t.Errorf("unexpected pageToken %q", r.URL.Query().Get("pageToken"))
+		}
+	}))
+	defer srv.Close()
+
+	reader := NewReader("proj", "ds", "tbl", WithReaderBaseURL(srv.URL))
+	rows, err := reader.QueryAggregatedCosts(context.Background(), time.Now().Add(-time.Hour), QueryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows across pages, got %d (requests: %v)", len(rows), pageRequests)
+	}
+	if rows[0].Team != "team-a" || rows[1].Team != "team-b" || rows[2].Team != "team-c" {
+		t.Errorf("rows out of order or missing: %+v", rows)
 	}
 }

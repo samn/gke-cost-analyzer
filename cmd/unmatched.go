@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"os/signal"
 	"sort"
 	"strings"
@@ -23,11 +22,13 @@ var unmatchedCmd = &cobra.Command{
 }
 
 func runUnmatched(cmd *cobra.Command, _ []string) error {
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
 	defer cancel()
 
 	fmt.Println("Connecting to Kubernetes cluster...")
-	lister, err := newPodLister()
+	// unmatched-pods computes no costs, so --namespace can always be applied
+	// at the Kubernetes API level.
+	lister, err := newPodLister(namespace)
 	if err != nil {
 		return fmt.Errorf("connecting to cluster: %w", err)
 	}
