@@ -90,6 +90,16 @@ func (sc *StandardCalculator) CalculateAll(pods []kube.PodInfo) []PodCost {
 			totalMemReqs += pods[i].MemRequestGB
 		}
 
+		// Compute the fraction of node capacity that is unallocated.
+		// When total requests exceed capacity (overcommitted), overhead is 0.
+		var cpuOverheadFrac, memOverheadFrac float64
+		if node.VCPU > 0 && totalCPUReqs < node.VCPU {
+			cpuOverheadFrac = 1 - totalCPUReqs/node.VCPU
+		}
+		if node.MemoryGB > 0 && totalMemReqs < node.MemoryGB {
+			memOverheadFrac = 1 - totalMemReqs/node.MemoryGB
+		}
+
 		for _, i := range podIndices {
 			// Value copy — pods[i] is a struct, so this creates a local
 			// copy that we can safely mutate without affecting the caller's
@@ -113,15 +123,22 @@ func (sc *StandardCalculator) CalculateAll(pods []kube.PodInfo) []PodCost {
 			cpuCostPerHr := cpuShare * nodeCPUCostPerHr
 			memCostPerHr := memShare * nodeMemCostPerHr
 
+			// Overhead: the portion of this pod's cost that comes from
+			// unallocated node capacity rather than its own requests.
+			cpuOverheadPerHr := cpuCostPerHr * cpuOverheadFrac
+			memOverheadPerHr := memCostPerHr * memOverheadFrac
+
 			costs[i] = PodCost{
-				Pod:            pod,
-				CPUCost:        cpuCostPerHr * durationHours,
-				MemCost:        memCostPerHr * durationHours,
-				TotalCost:      (cpuCostPerHr + memCostPerHr) * durationHours,
-				DurationHours:  durationHours,
-				CostPerHour:    cpuCostPerHr + memCostPerHr,
-				CPUCostPerHour: cpuCostPerHr,
-				MemCostPerHour: memCostPerHr,
+				Pod:                    pod,
+				CPUCost:                cpuCostPerHr * durationHours,
+				MemCost:                memCostPerHr * durationHours,
+				TotalCost:              (cpuCostPerHr + memCostPerHr) * durationHours,
+				DurationHours:          durationHours,
+				CostPerHour:            cpuCostPerHr + memCostPerHr,
+				CPUCostPerHour:         cpuCostPerHr,
+				MemCostPerHour:         memCostPerHr,
+				CPUOverheadCostPerHour: cpuOverheadPerHr,
+				MemOverheadCostPerHour: memOverheadPerHr,
 			}
 		}
 	}

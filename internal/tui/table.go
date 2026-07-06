@@ -164,15 +164,7 @@ func RenderTable(displayRows []DisplayRow, vis ColumnVisibility, sortCfg SortCon
 				"", // spot: mixed at team level
 			)
 			if vis.Utilization {
-				if a.HasUtilization {
-					row = append(row,
-						fmt.Sprintf("%.0f%%", a.CPUUtilization*100),
-						fmt.Sprintf("%.0f%%", a.MemUtilization*100),
-						fmt.Sprintf("$%.4f", a.WastedCostPerHour),
-					)
-				} else {
-					row = append(row, "-", "-", "-")
-				}
+				row = append(row, utilizationCells(a)...)
 			}
 			// Accumulate totals from team summaries only (not workload details).
 			totalPods += a.PodCount
@@ -316,17 +308,27 @@ func buildWorkloadRow(a cost.AggregatedCost, teamCol string, vis ColumnVisibilit
 		spot,
 	)
 	if vis.Utilization {
-		if a.HasUtilization {
-			row = append(row,
-				fmt.Sprintf("%.0f%%", a.CPUUtilization*100),
-				fmt.Sprintf("%.0f%%", a.MemUtilization*100),
-				fmt.Sprintf("$%.4f", a.WastedCostPerHour),
-			)
-		} else {
-			row = append(row, "-", "-", "-")
-		}
+		row = append(row, utilizationCells(a)...)
 	}
 	return row
+}
+
+// utilizationCells renders the CPU%, MEM%, and WASTE cells for the utilization
+// columns. CPU%/MEM% are shown only when Prometheus utilization data is present.
+// WASTE is shown whenever the group has a waste figure — standard-mode node
+// overhead produces waste even without Prometheus — so the column always
+// reconciles with the TOTAL WASTE footer.
+func utilizationCells(a cost.AggregatedCost) []string {
+	cpu, mem := "-", "-"
+	if a.HasUtilization {
+		cpu = fmt.Sprintf("%.0f%%", a.CPUUtilization*100)
+		mem = fmt.Sprintf("%.0f%%", a.MemUtilization*100)
+	}
+	waste := "-"
+	if a.HasUtilization || a.WastedCostPerHour > 0 {
+		waste = fmt.Sprintf("$%.4f", a.WastedCostPerHour)
+	}
+	return []string{cpu, mem, waste}
 }
 
 // aberrationIndicator returns "▲ " for cost increases, "▼ " for decreases,

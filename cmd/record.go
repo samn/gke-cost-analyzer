@@ -338,12 +338,14 @@ func aggregatedToSnapshot(a cost.AggregatedCost, ts time.Time, sc snapshotConfig
 		IntervalSeconds: intervalSecs,
 		CostMode:        a.CostMode,
 	}
+	if a.HasUtilization || a.WastedCostPerHour > 0 {
+		wastedCost := a.WastedCostPerHour * intervalHours
+		snap.WastedCost = &wastedCost
+	}
 	if a.HasUtilization {
 		snap.CPUUtilization = &a.CPUUtilization
 		snap.MemoryUtilization = &a.MemUtilization
 		snap.EfficiencyScore = &a.EfficiencyScore
-		wastedCost := a.WastedCostPerHour * intervalHours
-		snap.WastedCost = &wastedCost
 	}
 	return snap
 }

@@ -348,6 +348,20 @@ computed over the full set, and the namespace filter is applied to pod costs
 afterwards — otherwise a single filtered pod would absorb its entire node's
 cost.
 
+**Node overhead.** Because the full node cost is distributed across the pods on
+it, each pod also absorbs a share of any unallocated node capacity. That portion
+is tracked separately as overhead and counted toward waste (see *Wasted cost*):
+
+```
+cpu_overhead_fraction = max(0, 1 - total_cpu_requests_on_node / node.VCPU)
+mem_overhead_fraction = max(0, 1 - total_mem_requests_on_node / node.MemoryGB)
+pod_overhead_per_hour = pod_cpu_cost_per_hour × cpu_overhead_fraction
+                      + pod_mem_cost_per_hour × mem_overhead_fraction
+```
+
+When the node is overcommitted (`total_requests > capacity`) the fraction is 0.
+Autopilot pods have no node overhead (there is no node cost to distribute).
+
 Edge cases:
 - **Zero total requests on a node**: Cost share is 0 for all pods
 - **Pod on unknown node**: Skipped with warning, $0 cost
@@ -465,11 +479,32 @@ efficiency = (min(cpu_util, 1.0) × cpu_cost_per_hour + min(mem_util, 1.0) × me
 CPU utilization is capped at 1.0 for the efficiency calculation — CPU burst
 above 100% still means the requested resources are fully utilized.
 
-**Wasted cost** (per-hour rate, used by the TUI `watch` command):
+**Wasted cost** (per-hour rate, used by the TUI `watch` command). Waste has two
+disjoint components:
+
+1. **Node overhead** — the group's share of unallocated node capacity. Always
+   wasted (nothing runs on it, yet it is billed) and always counted, regardless
+   of whether Prometheus data is present. Zero for autopilot.
+2. **Request waste** — the requested-but-unused portion of the group's *own*
+   (non-overhead) resource cost. Requires Prometheus utilization data.
 
 ```
-wasted_cost_per_hour = cost_per_hour × (1 - efficiency_score)
+own_cpu_cost   = cpu_cost_per_hour - cpu_overhead_cost_per_hour
+own_mem_cost   = mem_cost_per_hour - mem_overhead_cost_per_hour
+request_waste  = own_cpu_cost × (1 - min(cpu_util, 1.0))
+               + own_mem_cost × (1 - min(mem_util, 1.0))
+
+wasted_cost_per_hour = node_overhead_cost_per_hour + request_waste   (Prometheus data present)
+wasted_cost_per_hour = node_overhead_cost_per_hour                   (no Prometheus data)
 ```
+
+Utilization is measured against *requests*, not node capacity, so the efficiency
+score never reflects overhead — the two components are computed and added
+separately. They do not overlap (own cost and overhead cost are disjoint slices
+of the group's total cost), so there is no double-counting. Note that a fully
+utilized workload on an underpacked node still reports its node overhead as
+waste. For autopilot pods overhead is zero, so `wasted_cost_per_hour` reduces to
+`cost_per_hour × (1 - efficiency_score)`, unchanged from before.
 
 When recorded to BigQuery/Parquet, the wasted cost is normalized to the snapshot
 interval window (same as the other cost fields):
@@ -480,7 +515,8 @@ wasted_cost = wasted_cost_per_hour × interval_hours
 
 #### Edge cases
 - **Prometheus unavailable**: Utilization fields are nil/zero; snapshot proceeds
-  without utilization data (warning logged to stderr).
+  without utilization data (warning logged to stderr). Standard-mode groups still
+  report a wasted cost equal to their node overhead.
 - **Partial pod data**: If some pods have no Prometheus metrics, only pods with
   data contribute to the utilization calculation.
 - **Zero cost**: If `cost_per_hour == 0`, efficiency score is 0 and wasted cost
