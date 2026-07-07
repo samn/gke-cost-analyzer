@@ -758,8 +758,9 @@ func TestAggregatedToSnapshotUtilizationFields(t *testing.T) {
 		t.Errorf("WastedCost = %v, want 0.35", snap.WastedCost)
 	}
 
-	// Without utilization data — all nullable fields should be nil
+	// Without utilization data and no overhead — all nullable fields should be nil
 	agg.HasUtilization = false
+	agg.WastedCostPerHour = 0
 	snap = aggregatedToSnapshot(agg, time.Now(), sc, 3600)
 
 	if snap.CPUUtilization != nil {
@@ -772,7 +773,21 @@ func TestAggregatedToSnapshotUtilizationFields(t *testing.T) {
 		t.Error("EfficiencyScore should be nil when HasUtilization is false")
 	}
 	if snap.WastedCost != nil {
-		t.Error("WastedCost should be nil when HasUtilization is false")
+		t.Error("WastedCost should be nil when HasUtilization is false and there is no waste")
+	}
+
+	// Standard-mode node overhead without Prometheus: WastedCost is recorded
+	// even though the utilization fields remain nil.
+	agg.HasUtilization = false
+	agg.WastedCostPerHour = 0.2
+	snap = aggregatedToSnapshot(agg, time.Now(), sc, 3600)
+
+	if snap.CPUUtilization != nil || snap.MemoryUtilization != nil || snap.EfficiencyScore != nil {
+		t.Error("utilization fields should be nil without Prometheus data")
+	}
+	// WastedCost = WastedCostPerHour × intervalHours = 0.2 × 1.0 = 0.2
+	if snap.WastedCost == nil || *snap.WastedCost != 0.2 {
+		t.Errorf("WastedCost = %v, want 0.2 (node overhead recorded without utilization)", snap.WastedCost)
 	}
 }
 

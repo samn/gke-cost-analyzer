@@ -8,6 +8,11 @@ import (
 	"github.com/samn/gke-cost-analyzer/internal/pricing"
 )
 
+// podOverhead returns the pod's total node-overhead cost per hour (CPU + memory).
+func podOverhead(c PodCost) float64 {
+	return c.CPUOverheadCostPerHour + c.MemOverheadCostPerHour
+}
+
 func testComputePriceTable() pricing.ComputePriceTable {
 	return pricing.FromComputePrices([]pricing.ComputePrice{
 		{Region: "us-central1", MachineFamily: "n2", ResourceType: pricing.CPU, Tier: pricing.OnDemand, UnitPrice: 0.031611},
@@ -303,6 +308,120 @@ func TestStandardCalculatorConcurrentAccess(t *testing.T) {
 		sc.CalculateAll(pods)
 	}
 	<-done
+}
+
+func TestStandardCalculatorOverheadFullyAllocated(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	sc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16, IsSpot: false},
+	})
+
+	// Pod requests exactly match node capacity — no overhead
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-1", "default", 4000, 16000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := sc.CalculateAll(pods)
+	if podOverhead(costs[0]) != 0 {
+		t.Errorf("overhead = %f, want 0 (fully allocated)", podOverhead(costs[0]))
+	}
+}
+
+func TestStandardCalculatorOverheadHalfAllocated(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	sc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16, IsSpot: false},
+	})
+
+	// Pod requests half the node → 50% overhead
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-1", "default", 2000, 8000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := sc.CalculateAll(pods)
+
+	// Node cost/hr: CPU = 4 * 0.031611 = 0.126444, Mem = 16 * 0.004237 = 0.067792
+	// Pod is the only one, so gets 100% of node cost = 0.194236
+	// But only half the node is allocated, so overhead = 50% of each resource cost
+	nodeCPUPerHr := 4.0 * 0.031611
+	nodeMemPerHr := 16.0 * 0.004237
+	expectedOverhead := 0.5*nodeCPUPerHr + 0.5*nodeMemPerHr
+
+	if !approxEqual(podOverhead(costs[0]), expectedOverhead, 0.0001) {
+		t.Errorf("overhead = %f, want %f", podOverhead(costs[0]), expectedOverhead)
+	}
+
+	// Total cost should still equal full node cost (overhead is part of total, not additional)
+	if !approxEqual(costs[0].CostPerHour, nodeCPUPerHr+nodeMemPerHr, 0.0001) {
+		t.Errorf("CostPerHour = %f, want %f", costs[0].CostPerHour, nodeCPUPerHr+nodeMemPerHr)
+	}
+}
+
+func TestStandardCalculatorOverheadTwoPods(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	sc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16, IsSpot: false},
+	})
+
+	// Two pods requesting 1 vCPU / 4 GB each = 2 of 4 vCPU, 8 of 16 GB (50% allocated)
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-a", "default", 1000, 4000, startTime, false, nil, "gke-node-1"),
+		kube.NewTestPodInfoOnNode("pod-b", "default", 1000, 4000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := sc.CalculateAll(pods)
+
+	// Each pod gets 50% of node cost, and 50% of each resource is unallocated
+	nodeCPUPerHr := 4.0 * 0.031611
+	nodeMemPerHr := 16.0 * 0.004237
+
+	// Each pod's share of overhead = 50% share × 50% overhead fraction
+	expectedOverheadPerPod := 0.5*nodeCPUPerHr*0.5 + 0.5*nodeMemPerHr*0.5
+
+	for i, c := range costs {
+		if !approxEqual(podOverhead(c), expectedOverheadPerPod, 0.0001) {
+			t.Errorf("pod %d overhead = %f, want %f", i, podOverhead(c), expectedOverheadPerPod)
+		}
+	}
+
+	// Sum of overhead should equal total unallocated cost
+	totalOverhead := podOverhead(costs[0]) + podOverhead(costs[1])
+	expectedTotalOverhead := 0.5*nodeCPUPerHr + 0.5*nodeMemPerHr
+	if !approxEqual(totalOverhead, expectedTotalOverhead, 0.0001) {
+		t.Errorf("total overhead = %f, want %f", totalOverhead, expectedTotalOverhead)
+	}
+}
+
+func TestStandardCalculatorOverheadOvercommitted(t *testing.T) {
+	now := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
+	startTime := now.Add(-1 * time.Hour)
+
+	sc := NewStandardCalculator("us-central1", testComputePriceTable(), func() time.Time { return now })
+	sc.SetNodes([]kube.NodeInfo{
+		{Name: "gke-node-1", MachineType: "n2-standard-4", MachineFamily: "n2", VCPU: 4, MemoryGB: 16, IsSpot: false},
+	})
+
+	// Requests exceed node capacity — no overhead
+	pods := []kube.PodInfo{
+		kube.NewTestPodInfoOnNode("pod-a", "default", 3000, 10000, startTime, false, nil, "gke-node-1"),
+		kube.NewTestPodInfoOnNode("pod-b", "default", 3000, 10000, startTime, false, nil, "gke-node-1"),
+	}
+
+	costs := sc.CalculateAll(pods)
+	for i, c := range costs {
+		if podOverhead(c) != 0 {
+			t.Errorf("pod %d overhead = %f, want 0 (overcommitted)", i, podOverhead(c))
+		}
+	}
 }
 
 func TestStandardCalculatorImplementsInterface(t *testing.T) {

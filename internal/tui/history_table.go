@@ -249,15 +249,19 @@ func buildHistoryWorkloadRow(r bigquery.HistoryCostRow, teamCol string, vis Colu
 		spot,
 	)
 	if vis.Utilization {
+		// CPU%/MEM% require utilization data; WASTE is shown whenever there is a
+		// waste figure (standard-mode node overhead is recorded even without
+		// Prometheus), so the column reconciles with the TOTAL/team WASTE rows.
+		cpu, mem := "-", "-"
 		if r.AvgCPUUtil != nil {
-			row = append(row,
-				fmt.Sprintf("%.0f%%", *r.AvgCPUUtil*100),
-				fmt.Sprintf("%.0f%%", derefFloat(r.AvgMemUtil)*100),
-				fmt.Sprintf("$%.4f", r.TotalWastedCost),
-			)
-		} else {
-			row = append(row, "-", "-", "-")
+			cpu = fmt.Sprintf("%.0f%%", *r.AvgCPUUtil*100)
+			mem = fmt.Sprintf("%.0f%%", derefFloat(r.AvgMemUtil)*100)
 		}
+		waste := "-"
+		if r.AvgCPUUtil != nil || r.TotalWastedCost > 0 {
+			waste = fmt.Sprintf("$%.4f", r.TotalWastedCost)
+		}
+		row = append(row, cpu, mem, waste)
 	}
 	return row
 }

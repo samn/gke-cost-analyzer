@@ -37,13 +37,20 @@ type AggregatedCost struct {
 	CPUCostPerHour float64
 	MemCostPerHour float64
 
+	// CPUOverheadCostPerHour and MemOverheadCostPerHour are the portions of the
+	// per-resource cost attributable to unallocated node capacity (standard GKE
+	// only). Always zero for autopilot. They are always counted toward
+	// WastedCostPerHour — unallocated capacity is pure waste.
+	CPUOverheadCostPerHour float64
+	MemOverheadCostPerHour float64
+
 	// Utilization fields — populated when Prometheus data is available.
 	// Zero values indicate no utilization data.
 	HasUtilization    bool
 	CPUUtilization    float64 // ratio: actual / requested (0–1+)
 	MemUtilization    float64 // ratio: actual / requested (0–1)
 	EfficiencyScore   float64 // cost-weighted utilization (0–1)
-	WastedCostPerHour float64 // cost_per_hour × (1 - efficiency)
+	WastedCostPerHour float64 // node overhead + requested-but-unused own cost
 }
 
 // Aggregate groups pod costs by the configured label hierarchy.
@@ -103,6 +110,8 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 		ga.agg.CostPerHour += pc.CostPerHour
 		ga.agg.CPUCostPerHour += pc.CPUCostPerHour
 		ga.agg.MemCostPerHour += pc.MemCostPerHour
+		ga.agg.CPUOverheadCostPerHour += pc.CPUOverheadCostPerHour
+		ga.agg.MemOverheadCostPerHour += pc.MemOverheadCostPerHour
 
 		if usage != nil {
 			podKey := prometheus.PodKey{Namespace: pc.Pod.Namespace, Pod: pc.Pod.Name}
@@ -127,6 +136,10 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 	result := make([]AggregatedCost, 0, len(groups))
 	for _, key := range keys {
 		ga := groups[key]
+		// Node overhead (the group's share of unallocated node capacity) is
+		// always wasted: nothing runs on that capacity, yet it is billed. This
+		// term is independent of utilization and is zero for autopilot.
+		overheadWaste := ga.agg.CPUOverheadCostPerHour + ga.agg.MemOverheadCostPerHour
 		if ga.hasUsage {
 			ga.agg.HasUtilization = true
 			// Only pods with Prometheus data contribute to the utilization
@@ -142,7 +155,20 @@ func AggregateWithUtilization(costs []PodCost, labels LabelConfig, usage map[pro
 				ga.agg.CPUUtilization, ga.agg.MemUtilization,
 				ga.agg.CPUCostPerHour, ga.agg.MemCostPerHour, ga.agg.CostPerHour,
 			)
-			ga.agg.WastedCostPerHour = ga.agg.CostPerHour * (1 - ga.agg.EfficiencyScore)
+			// Request-level waste: the requested-but-unused portion of the
+			// group's own (non-overhead) resource cost. Utilization is measured
+			// against requests, not node capacity, so it never reflects
+			// overhead — hence overhead is added separately above (no
+			// double-counting: own cost and overhead cost are disjoint).
+			ownCPU := ga.agg.CPUCostPerHour - ga.agg.CPUOverheadCostPerHour
+			ownMem := ga.agg.MemCostPerHour - ga.agg.MemOverheadCostPerHour
+			requestWaste := ownCPU*(1-min(ga.agg.CPUUtilization, 1.0)) +
+				ownMem*(1-min(ga.agg.MemUtilization, 1.0))
+			ga.agg.WastedCostPerHour = overheadWaste + requestWaste
+		} else {
+			// No Prometheus data: request-level waste is unknown, so node
+			// overhead is the only measurable waste signal.
+			ga.agg.WastedCostPerHour = overheadWaste
 		}
 		result = append(result, ga.agg)
 	}

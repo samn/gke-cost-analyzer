@@ -19,6 +19,11 @@ type PodCost struct {
 	CostPerHour    float64
 	CPUCostPerHour float64
 	MemCostPerHour float64
+	// CPUOverheadCostPerHour and MemOverheadCostPerHour are the portions of
+	// CPUCostPerHour / MemCostPerHour attributable to unallocated node capacity
+	// (standard GKE only). For autopilot pods these are always zero.
+	CPUOverheadCostPerHour float64
+	MemOverheadCostPerHour float64
 }
 
 // PodCostCalculator is the interface for calculating costs for a list of pods.
