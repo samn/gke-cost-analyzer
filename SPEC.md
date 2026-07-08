@@ -38,14 +38,14 @@ interactive table via BubbleTea. Supports interactive column sorting with the
 keys `1`-`9`, `0`, then `-` and `=` for overflow columns (a fully-enabled
 table has more sortable columns than number keys).
 
-Flags: `--interval`, `--region` (required), `--project` (global), `--namespace`,
+Flags: `--interval`, `--region` (required), `--prometheus-project-id`, `--namespace`,
 `--team-label`, `--workload-label`, `--subtype-label`, `--prometheus-url` (optional),
 `--trend-threshold` (Z-score threshold for aberration detection, default 3.0, 0 to disable).
 
 Utilization columns (CPU%, MEM%, WASTE) are automatically displayed when a
-Prometheus source is available — either GCP Managed Prometheus (default when
-project is detected) or a custom `--prometheus-url`. Utilization data is
-fetched on each refresh cycle.
+Prometheus source is available — either GCP Managed Prometheus (default when a
+project is available, via `--prometheus-project-id` or auto-detection) or a
+custom `--prometheus-url`. Utilization data is fetched on each refresh cycle.
 
 **Cost aberration detection**: The watch command tracks per-workload cost trends
 using an Exponential Weighted Moving Average (EWMA). When a workload's
@@ -61,16 +61,18 @@ indicators next to the $/HR value in the cost table.
 Daemon mode: periodically snapshot pod costs and write aggregated records to
 BigQuery. Runs once immediately on startup, then on a ticker.
 
-Flags: `--interval` (default 5m), `--region` (required), `--project` (required, global),
-`--cluster-name` (required), `--dataset`, `--table`, `--namespace`,
-`--dry-run`, `--output-file` (requires `--dry-run`; appends to a local
-Parquet file — each append rewrites the file via temp file + atomic rename),
-`--prometheus-url` (optional).
+Flags: `--interval` (default 5m), `--region` (required), `--bigquery-project-id`,
+`--prometheus-project-id`, `--cluster-name` (required), `--dataset`, `--table`,
+`--namespace`, `--dry-run`, `--output-file` (requires `--dry-run`; appends to a
+local Parquet file — each append rewrites the file via temp file + atomic rename),
+`--prometheus-url` (optional). A resolvable BigQuery project is required (see
+"BigQuery table reference" below).
 
 Utilization metrics are automatically fetched from GCP Managed Prometheus
-(default when project is detected) or a custom `--prometheus-url` before each
-snapshot. If the fetch fails, the snapshot proceeds without utilization data (a
-warning is logged to stderr).
+(default when a project is available, via `--prometheus-project-id` or
+auto-detection) or a custom `--prometheus-url` before each snapshot. If the fetch
+fails, the snapshot proceeds without utilization data (a warning is logged to
+stderr).
 
 ### `history`
 Query BigQuery for historical cost snapshots recorded by the `record` command
@@ -81,10 +83,11 @@ Usage: `gke-cost-analyzer history <duration>`
 
 Duration format: `3h` (hours), `3d` (days), `1w` (weeks).
 
-Flags: `--project` (required, global), `--dataset` (default `gke_costs`),
+Flags: `--bigquery-project-id`, `--dataset` (default `gke_costs`),
 `--table` (default `cost_snapshots`), `--cluster-name` (optional filter,
 defaults to auto-detected cluster), `--all-clusters` (query all clusters),
-`--namespace` (global, optional filter), `--team` (optional filter).
+`--namespace` (global, optional filter), `--team` (optional filter). A resolvable
+BigQuery project is required (see "BigQuery table reference" below).
 
 **Cluster filtering**: By default, the `history` command filters to the
 auto-detected cluster (from kubeconfig or GCE metadata), consistent with other
@@ -146,6 +149,25 @@ migrated: columns present in the current schema but missing from the table
 are added via a schema PATCH (BigQuery permits additive NULLABLE columns).
 A missing REQUIRED column is an error — BigQuery cannot add it in place.
 
+Flags: `--bigquery-project-id`, `--dataset` (default `gke_costs`), `--table`
+(default `cost_snapshots`), `--location` (default `US`). A resolvable BigQuery
+project is required (see "BigQuery table reference" below); the dataset and
+table are created in that project.
+
+### BigQuery table reference
+The `record`, `setup`, and `history` commands resolve their target table from
+three inputs, in order of precedence:
+1. A fully-qualified `--table`. The value is dot-split and accepts `table`,
+   `dataset.table`, or `project.dataset.table`; parts present in the value
+   override `--bigquery-project-id` / `--dataset`. Each supplied part must match
+   `^[A-Za-z0-9_-]+$` (empty parts, e.g. `dataset.`, and >3 parts are errors).
+2. `--bigquery-project-id` and `--dataset`.
+3. The auto-detected environment project (for the project only).
+
+If no project can be resolved from any of these, the command fails with a usage
+error. There is no `--project` flag — BigQuery and Prometheus projects are
+configured independently.
+
 ### `version`
 Print version, git commit, and build date. Runs no environment detection.
 
@@ -157,27 +179,34 @@ Print version, git commit, and build date. Runs no environment detection.
 list of namespaces to exclude from pod listing. When `--namespace` targets a
 specific namespace the exclusion list is effectively a no-op. Set to an empty
 string to include all namespaces.
-`--project` (GCP project ID; auto-detected from GCE metadata or kubeconfig;
-used by `record`/`setup` for BigQuery and by all commands for GMP Prometheus).
 `--prometheus-url` (override Prometheus API base URL; defaults to GCP Managed
 Prometheus when a project ID is available).
 `--mode` (cost calculation mode: `autopilot`, `standard`, or `all`; default
 `all`). In `all` mode, pods are partitioned by node type and costed with the
 appropriate calculator; a MODE column is shown in the TUI.
 
-Environment defaults: `--region`, `--project`, and `--cluster-name` are
+Project configuration is split by use, with no shared `--project` flag:
+`--bigquery-project-id` (command-scoped: `record`/`setup`/`history`) sets the
+project owning the BigQuery dataset; `--prometheus-project-id` (command-scoped:
+`record`/`watch`) sets the project queried for GMP metrics. Both default to the
+auto-detected environment project when unset.
+
+Environment defaults: `--region`, the GCP project, and `--cluster-name` are
 auto-detected from the GCE metadata server (when running on GKE) or from the
-current kubeconfig context. Explicit CLI flags always take priority.
-Detection is skipped entirely when all three values are set (it costs up to
-three metadata round trips, 1s timeout each off-GCP); the three metadata
-lookups run concurrently; `version` never detects. Zones from either source
-are converted to regions (`us-central1-a` → `us-central1`) since pricing is
-regional.
+current kubeconfig context. Explicit CLI flags always take priority. The
+detected project is stored separately from any flag and is the default for both
+BigQuery and Prometheus, and the `record` project_id attribution. Detection runs
+on every command except `version`: the detected project has no backing flag, and
+`record` needs it to attribute project_id to the actual cluster project even when
+every flag is set — so there is no fast-path skip. The three metadata lookups run
+concurrently (a single ~1s timeout off-GCP). Zones from either source are
+converted to regions (`us-central1-a` → `us-central1`) since pricing is regional.
 
 **Prometheus auto-detection**: When `--prometheus-url` is not set and a GCP
-project ID is available (via `--project` or auto-detected), utilization metrics
-are automatically fetched from Google Cloud Managed Service for Prometheus (GMP)
-at `https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`.
+project ID is available (via `--prometheus-project-id` or auto-detected),
+utilization metrics are automatically fetched from Google Cloud Managed Service
+for Prometheus (GMP) at
+`https://monitoring.googleapis.com/v1/projects/{project}/location/global/prometheus`.
 The request is authenticated using Application Default Credentials with the
 `monitoring.read` scope. Set `--prometheus-url` to a custom URL to use a
 self-hosted Prometheus instead.
@@ -530,6 +559,13 @@ Each record is a `CostSnapshot` with 21 fields: timestamp, project_id, region,
 cluster_name, namespace, team, workload, subtype, pod_count, cpu_request_vcpu,
 memory_request_gb, cpu_cost, memory_cost, total_cost, is_spot, interval_seconds,
 cost_mode, cpu_utilization, memory_utilization, efficiency_score, wasted_cost.
+
+The `project_id` field identifies the project where the workloads run (for cost
+attribution), which is independent of the BigQuery destination project. `record`
+populates it from the auto-detected cluster project, falling back to the
+resolved BigQuery project only when nothing was detected. This lets a central
+BigQuery dataset (a different `--bigquery-project-id`) attribute costs across
+many clusters.
 
 The `cost_mode` field is a NULLABLE STRING (`"autopilot"` or `"standard"`).
 Existing rows with NULL are treated as `"autopilot"` (backward compatible).

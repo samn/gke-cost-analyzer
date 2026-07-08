@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `--table` now accepts a fully-qualified BigQuery table reference for `record`,
+  `setup`, and `history`: `dataset.table` or `project.dataset.table` (dot-separated
+  per BigQuery standard SQL). A project in the value overrides `--bigquery-project-id`,
+  so the destination no longer requires setting three flags together.
+- `--bigquery-project-id` (on `record`/`setup`/`history`) and `--prometheus-project-id`
+  (on `record`/`watch`) configure the BigQuery and Managed Prometheus projects
+  independently. Both default to the auto-detected environment project.
+
+### Changed
+- **Breaking:** removed the global `--project` flag. It previously configured both
+  the BigQuery dataset and Managed Prometheus, conflating two independent concerns.
+  Project is now inferred from the environment by default and overridden per use with
+  `--bigquery-project-id` / `--prometheus-project-id` (or a fully-qualified `--table`).
+- The recorded `project_id` column is now the auto-detected cluster project (the
+  project where the workloads run), falling back to the resolved BigQuery project only
+  when nothing was detected. Previously it was whatever `--project` was set to, which
+  misattributed costs when BigQuery lived in a different project.
+
 ## [0.7.0] - 2026-07-07
 
 ### Changed

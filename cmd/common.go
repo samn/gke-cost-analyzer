@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,6 +49,59 @@ func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
 			return usageError{err}
 		}
 		return nil
+	}
+}
+
+// bigQueryProject returns the project owning the BigQuery dataset: the explicit
+// --bigquery-project-id, else the auto-detected environment project.
+func bigQueryProject() string {
+	if bigqueryProjectID != "" {
+		return bigqueryProjectID
+	}
+	return detectedProject
+}
+
+// prometheusProject returns the project queried for GCP Managed Prometheus
+// metrics: the explicit --prometheus-project-id, else the auto-detected
+// environment project.
+func prometheusProject() string {
+	if prometheusProjectID != "" {
+		return prometheusProjectID
+	}
+	return detectedProject
+}
+
+// bqIdentifierRegex matches valid BigQuery project/dataset/table identifiers
+// (projects also allow hyphens). Mirrors the validation in the bigquery reader.
+var bqIdentifierRegex = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// parseTableRef resolves the effective BigQuery project, dataset, and table from
+// a --table value that may be dot-qualified, falling back to defaultProject and
+// defaultDataset for omitted parts. Accepts:
+//
+//	table                    -> (defaultProject, defaultDataset, table)
+//	dataset.table            -> (defaultProject, dataset, table)
+//	project.dataset.table    -> (project, dataset, table)
+//
+// defaultProject may be empty (unset); the caller enforces the required-project
+// check. Every part supplied in the value must be a valid identifier.
+func parseTableRef(table, defaultProject, defaultDataset string) (project, dataset, tbl string, err error) {
+	parts := strings.Split(table, ".")
+	if len(parts) > 3 {
+		return "", "", "", usageErrorf("invalid --table %q: use table, dataset.table, or project.dataset.table", table)
+	}
+	for _, p := range parts {
+		if !bqIdentifierRegex.MatchString(p) {
+			return "", "", "", usageErrorf("invalid --table %q: %q is not a valid BigQuery identifier", table, p)
+		}
+	}
+	switch len(parts) {
+	case 1:
+		return defaultProject, defaultDataset, parts[0], nil
+	case 2:
+		return defaultProject, parts[0], parts[1], nil
+	default:
+		return parts[0], parts[1], parts[2], nil
 	}
 }
 
@@ -196,7 +251,8 @@ func defaultGCPHTTPClient(ctx context.Context, scopes ...string) (*http.Client, 
 
 // newPromClient creates a Prometheus client based on the configuration:
 //   - If --prometheus-url is set, use that URL with a plain HTTP client.
-//   - Otherwise, if a GCP project ID is available, default to Google Cloud
+//   - Otherwise, if a Prometheus project ID is available (via
+//     --prometheus-project-id or auto-detection), default to Google Cloud
 //     Managed Service for Prometheus (GMP) with OAuth2 authentication.
 //   - If neither, return nil (no utilization metrics).
 func newPromClient(ctx context.Context) (*prometheus.Client, error) {
@@ -205,17 +261,18 @@ func newPromClient(ctx context.Context) (*prometheus.Client, error) {
 		return prometheus.NewClient(prometheusURL), nil
 	}
 
-	// Auto-default to GMP when project ID is available.
-	if project == "" {
+	// Auto-default to GMP when a project ID is available.
+	p := prometheusProject()
+	if p == "" {
 		return nil, nil
 	}
 
-	gmpURL := prometheus.GMPBaseURL(project)
+	gmpURL := prometheus.GMPBaseURL(p)
 	httpClient, err := gcpHTTPClientFn(ctx, "https://www.googleapis.com/auth/monitoring.read")
 	if err != nil {
 		return nil, fmt.Errorf("creating monitoring credentials: %w", err)
 	}
 
-	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", project)
+	fmt.Printf("Fetching utilization metrics from GCP Managed Prometheus (project %s)\n", p)
 	return prometheus.NewClient(gmpURL, prometheus.WithHTTPClient(httpClient), prometheus.WithGMPSystemMetrics()), nil
 }

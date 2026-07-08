@@ -23,8 +23,9 @@ var (
 )
 
 func init() {
+	historyCmd.Flags().StringVar(&bigqueryProjectID, "bigquery-project-id", "", "GCP project ID owning the BigQuery dataset (defaults to the auto-detected environment project; overridden by a fully-qualified --table)")
 	historyCmd.Flags().StringVar(&historyDataset, "dataset", "gke_costs", "BigQuery dataset name")
-	historyCmd.Flags().StringVar(&historyTable, "table", "cost_snapshots", "BigQuery table name")
+	historyCmd.Flags().StringVar(&historyTable, "table", "cost_snapshots", "BigQuery table name (accepts dataset.table or project.dataset.table)")
 	historyCmd.Flags().StringVar(&historyTeam, "team", "", "Filter by team name")
 	historyCmd.Flags().StringVar(&historyCluster, "cluster-name", "", "Filter by cluster name (defaults to auto-detected cluster)")
 	historyCmd.Flags().BoolVar(&historyAllClusters, "all-clusters", false, "Show costs from all clusters")
@@ -40,8 +41,12 @@ var historyCmd = &cobra.Command{
 }
 
 func runHistory(cmd *cobra.Command, args []string) error {
-	if project == "" {
-		return usageErrorf("--project is required for the history command")
+	bqProject, dataset, table, err := parseTableRef(historyTable, bigQueryProject(), historyDataset)
+	if err != nil {
+		return err
+	}
+	if bqProject == "" {
+		return usageErrorf("no BigQuery project: set --bigquery-project-id, use a fully-qualified --table (project.dataset.table), or run where the project is auto-detected")
 	}
 
 	if historyAllClusters && historyCluster != "" {
@@ -62,7 +67,7 @@ func runHistory(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("creating authenticated client: %w", err)
 	}
 
-	reader := bigquery.NewReader(project, historyDataset, historyTable,
+	reader := bigquery.NewReader(bqProject, dataset, table,
 		bigquery.WithReaderHTTPClient(httpClient))
 
 	bucketSecs := bigquery.BucketSeconds(duration)

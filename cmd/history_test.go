@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,23 +56,20 @@ func TestParseHistoryDurationInvalid(t *testing.T) {
 }
 
 func TestHistoryCommandRequiresProject(t *testing.T) {
-	oldProject := project
-	project = ""
-	defer func() { project = oldProject }()
+	defer resetProjectState()()
 
 	err := runHistory(historyCmd, []string{"3d"})
 	if err == nil {
-		t.Fatal("expected error when project is empty")
+		t.Fatal("expected error when no project is available")
 	}
-	if err.Error() != "--project is required for the history command" {
+	if !IsUsageError(err) || !strings.Contains(err.Error(), "no BigQuery project") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
 
 func TestHistoryAllClustersWithClusterNameError(t *testing.T) {
-	oldProject := project
-	project = "test-project"
-	defer func() { project = oldProject }()
+	defer resetProjectState()()
+	bigqueryProjectID = "test-project"
 
 	oldCluster := historyCluster
 	historyCluster = "some-cluster"

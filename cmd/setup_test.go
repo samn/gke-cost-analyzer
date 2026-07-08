@@ -6,15 +6,13 @@ import (
 )
 
 func TestSetupRequiresProject(t *testing.T) {
-	saved := project
-	defer func() { project = saved }()
-	project = ""
+	defer resetProjectState()()
 
 	err := runSetup(rootCmd, nil)
 	if err == nil {
-		t.Fatal("expected error when --project is missing")
+		t.Fatal("expected error when no BigQuery project is available")
 	}
-	if !strings.Contains(err.Error(), "--project") {
-		t.Errorf("error should mention --project, got: %v", err)
+	if !IsUsageError(err) || !strings.Contains(err.Error(), "no BigQuery project") {
+		t.Errorf("error should mention the missing BigQuery project, got: %v", err)
 	}
 }

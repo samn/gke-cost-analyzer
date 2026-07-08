@@ -14,8 +14,9 @@ var (
 )
 
 func init() {
+	setupCmd.Flags().StringVar(&bigqueryProjectID, "bigquery-project-id", "", "GCP project ID owning the BigQuery dataset (defaults to the auto-detected environment project; overridden by a fully-qualified --table)")
 	setupCmd.Flags().StringVar(&setupDataset, "dataset", "gke_costs", "BigQuery dataset name")
-	setupCmd.Flags().StringVar(&setupTable, "table", "cost_snapshots", "BigQuery table name")
+	setupCmd.Flags().StringVar(&setupTable, "table", "cost_snapshots", "BigQuery table name (accepts dataset.table or project.dataset.table)")
 	setupCmd.Flags().StringVar(&setupLocation, "location", "US", "BigQuery dataset location")
 	rootCmd.AddCommand(setupCmd)
 }
@@ -28,8 +29,12 @@ var setupCmd = &cobra.Command{
 }
 
 func runSetup(cmd *cobra.Command, _ []string) error {
-	if project == "" {
-		return usageErrorf("--project is required")
+	bqProject, dataset, table, err := parseTableRef(setupTable, bigQueryProject(), setupDataset)
+	if err != nil {
+		return err
+	}
+	if bqProject == "" {
+		return usageErrorf("no BigQuery project: set --bigquery-project-id, use a fully-qualified --table (project.dataset.table), or run where the project is auto-detected")
 	}
 
 	ctx := cmd.Context()
@@ -39,22 +44,22 @@ func runSetup(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("creating authenticated client: %w", err)
 	}
 
-	sc := bigquery.NewSetupClient(project,
+	sc := bigquery.NewSetupClient(bqProject,
 		bigquery.WithSetupHTTPClient(httpClient))
 
-	fmt.Printf("Creating dataset %s.%s (location: %s)...\n", project, setupDataset, setupLocation)
-	if err := sc.EnsureDataset(ctx, setupDataset, setupLocation); err != nil {
+	fmt.Printf("Creating dataset %s.%s (location: %s)...\n", bqProject, dataset, setupLocation)
+	if err := sc.EnsureDataset(ctx, dataset, setupLocation); err != nil {
 		return fmt.Errorf("creating dataset: %w", err)
 	}
 	fmt.Println("Dataset ready.")
 
-	fmt.Printf("Creating table %s.%s.%s...\n", project, setupDataset, setupTable)
-	if err := sc.EnsureTable(ctx, setupDataset, setupTable); err != nil {
+	fmt.Printf("Creating table %s.%s.%s...\n", bqProject, dataset, table)
+	if err := sc.EnsureTable(ctx, dataset, table); err != nil {
 		return fmt.Errorf("creating table: %w", err)
 	}
 	fmt.Println("Table ready.")
 
 	fmt.Println("\nSetup complete! You can now run:")
-	fmt.Printf("  gke-cost-analyzer record --project %s --region <REGION> --cluster-name <CLUSTER>\n", project)
+	fmt.Printf("  gke-cost-analyzer record --bigquery-project-id %s --region <REGION> --cluster-name <CLUSTER>\n", bqProject)
 	return nil
 }

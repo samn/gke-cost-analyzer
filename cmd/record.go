@@ -28,8 +28,10 @@ var (
 
 func init() {
 	recordCmd.Flags().DurationVar(&recordInterval, "interval", 5*time.Minute, "Snapshot interval")
+	recordCmd.Flags().StringVar(&bigqueryProjectID, "bigquery-project-id", "", "GCP project ID owning the BigQuery dataset (defaults to the auto-detected environment project; overridden by a fully-qualified --table)")
+	recordCmd.Flags().StringVar(&prometheusProjectID, "prometheus-project-id", "", "GCP project ID for GCP Managed Prometheus metrics (defaults to the auto-detected environment project)")
 	recordCmd.Flags().StringVar(&bqDataset, "dataset", "gke_costs", "BigQuery dataset name")
-	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name")
+	recordCmd.Flags().StringVar(&bqTable, "table", "cost_snapshots", "BigQuery table name (accepts dataset.table or project.dataset.table)")
 	recordCmd.Flags().StringVar(&clusterName, "cluster-name", "", "GKE cluster name (auto-detected from environment)")
 	recordCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Log rows that would be written without writing to BigQuery")
 	recordCmd.Flags().StringVar(&outputFile, "output-file", "", "Append dry-run snapshots to a local Parquet file (requires --dry-run)")
@@ -47,8 +49,12 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	if region == "" {
 		return usageErrorf("--region is required")
 	}
-	if project == "" {
-		return usageErrorf("--project is required")
+	bqProject, dataset, table, err := parseTableRef(bqTable, bigQueryProject(), bqDataset)
+	if err != nil {
+		return err
+	}
+	if bqProject == "" {
+		return usageErrorf("no BigQuery project: set --bigquery-project-id, use a fully-qualified --table (project.dataset.table), or run where the project is auto-detected")
 	}
 	if clusterName == "" {
 		return usageErrorf("--cluster-name is required")
@@ -58,6 +64,14 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 	}
 	if outputFile != "" && !dryRun {
 		return usageErrorf("--output-file requires --dry-run")
+	}
+
+	// project_id attributes each row to the project where the workloads run
+	// (the auto-detected cluster project), falling back to the BigQuery
+	// destination project when nothing was detected.
+	attributionProject := detectedProject
+	if attributionProject == "" {
+		attributionProject = bqProject
 	}
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), shutdownSignals...)
@@ -117,16 +131,16 @@ func runRecord(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("creating authenticated client: %w", err)
 		}
-		writer = bigquery.NewWriter(project, bqDataset, bqTable,
+		writer = bigquery.NewWriter(bqProject, dataset, table,
 			bigquery.WithWriterHTTPClient(httpClient))
 		fmt.Printf("Recording costs every %s to %s.%s.%s\n",
-			recordInterval, project, bqDataset, bqTable)
+			recordInterval, bqProject, dataset, table)
 	}
 
 	lc := labelConfig()
 	_, postFilterNS := listNamespace()
 	sc := snapshotConfig{
-		projectID:       project,
+		projectID:       attributionProject,
 		region:          region,
 		clusterName:     clusterName,
 		filterNamespace: postFilterNS,
