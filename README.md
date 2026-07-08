@@ -14,7 +14,7 @@ A CLI tool to monitor and analyze costs of GKE workloads (Autopilot and standard
 - **Price caching**: Fetches Autopilot and Compute Engine pricing from the Cloud Billing Catalog API and caches locally for 24 hours
 - **SPOT support**: Automatically detects and separately prices Spot pods
 - **Configurable label hierarchy**: Group costs by team, workload, and subtype using custom label names
-- **Environment auto-detection**: `--region`, `--project`, and `--cluster-name` are auto-detected from GCE metadata or kubeconfig context
+- **Environment auto-detection**: `--region`, the GCP project, and `--cluster-name` are auto-detected from GCE metadata or kubeconfig context. The inferred project is used for both BigQuery and Managed Prometheus unless overridden with `--bigquery-project-id` / `--prometheus-project-id` (or a fully-qualified `--table`)
 - **Namespace exclusion**: System namespaces (`kube-system`, `gmp-system`) are excluded by default via `--exclude-namespaces`
 
 ## Installation
@@ -51,7 +51,7 @@ docker run --rm ghcr.io/samn/gke-cost-analyzer version
 
 docker run --rm ghcr.io/samn/gke-cost-analyzer record \
   --region us-central1 \
-  --project my-gcp-project \
+  --bigquery-project-id my-gcp-project \
   --cluster-name my-cluster
 ```
 
@@ -65,7 +65,7 @@ docker run --rm \
   -v "$HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro" \
   -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
   ghcr.io/samn/gke-cost-analyzer history 7d \
-  --project my-gcp-project
+  --bigquery-project-id my-gcp-project
 ```
 
 If you haven't already, generate ADC with:
@@ -129,7 +129,7 @@ All GCP API calls use [Application Default Credentials](https://cloud.google.com
 | `roles/monitoring.metricReader` | `watch`, `record` | Query CPU/memory utilization via GCP Managed Prometheus |
 
 **Notes:**
-- `roles/monitoring.metricReader` is only needed when using GCP Managed Prometheus (the default when `--project` is set). It is not needed with `--prometheus-url` (custom Prometheus endpoint) or `--dry-run`.
+- `roles/monitoring.metricReader` is only needed when using GCP Managed Prometheus (the default when a project is available — auto-detected or set via `--prometheus-project-id`). It is not needed with `--prometheus-url` (custom Prometheus endpoint) or `--dry-run`.
 - `roles/bigquery.dataEditor` is not needed in `--dry-run` mode.
 - If you pre-create the dataset and table manually, `roles/bigquery.dataEditor` is sufficient for `setup` as well.
 
@@ -146,8 +146,8 @@ Options:
 - `--mode`: Cost calculation mode: `autopilot`, `standard`, or `all` (default: `all`)
 - `--interval`: Refresh interval (default: 10s)
 - `--namespace`: Filter to a specific namespace (default: all)
-- `--project`: GCP project ID for Managed Prometheus utilization (auto-detected)
-- `--prometheus-url`: Custom Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)
+- `--prometheus-project-id`: GCP project ID for Managed Prometheus utilization (defaults to the auto-detected environment project)
+- `--prometheus-url`: Custom Prometheus API base URL (defaults to GCP Managed Prometheus when a project is available)
 - `--exclude-namespaces`: Namespaces to exclude (default: `kube-system,gmp-system`)
 - `--trend-threshold`: Z-score threshold for cost aberration detection (default: 3.0, 0 to disable)
 - `--team-label`: Pod label for team grouping (default: "team")
@@ -162,7 +162,7 @@ First, set up the BigQuery dataset and table:
 
 ```bash
 gke-cost-analyzer setup \
-  --project my-gcp-project \
+  --bigquery-project-id my-gcp-project \
   --location US
 ```
 
@@ -171,17 +171,18 @@ Then start recording:
 ```bash
 gke-cost-analyzer record \
   --region us-central1 \
-  --project my-gcp-project \
+  --bigquery-project-id my-gcp-project \
   --cluster-name my-cluster \
   --interval 5m
 ```
 
 Options:
 - `--region` (required): GCP region for pricing lookup (auto-detected from environment)
-- `--project` (required): GCP project ID for BigQuery (auto-detected)
+- `--bigquery-project-id`: GCP project ID owning the BigQuery dataset (defaults to the auto-detected environment project; overridden by a fully-qualified `--table`)
+- `--prometheus-project-id`: GCP project ID for Managed Prometheus utilization (defaults to the auto-detected environment project)
 - `--cluster-name` (required): GKE cluster name (auto-detected)
 - `--dataset`: BigQuery dataset name (default: "gke_costs")
-- `--table`: BigQuery table name (default: "cost_snapshots")
+- `--table`: BigQuery table name (default: "cost_snapshots"). Accepts a fully-qualified `dataset.table` or `project.dataset.table`, which overrides `--dataset` / `--bigquery-project-id`
 - `--interval`: Snapshot interval (default: 5m)
 - `--mode`: Cost calculation mode: `autopilot`, `standard`, or `all` (default: `all`)
 - `--dry-run`: Log rows to stdout without writing to BigQuery
@@ -189,24 +190,30 @@ Options:
 - `--prometheus-url`: Custom Prometheus API base URL (defaults to GCP Managed Prometheus)
 - `--exclude-namespaces`: Namespaces to exclude (default: `kube-system,gmp-system`)
 
+A BigQuery project is required: set `--bigquery-project-id`, use a fully-qualified
+`--table` (`project.dataset.table`), or run where the project can be auto-detected.
+The recorded `project_id` column is the auto-detected cluster project (the project
+where the workloads run), so a central BigQuery dataset can attribute costs across
+many clusters.
+
 ### View historical costs
 
 Query BigQuery for recorded cost data:
 
 ```bash
-gke-cost-analyzer history 3d --project my-gcp-project
+gke-cost-analyzer history 3d --bigquery-project-id my-gcp-project
 ```
 
 View costs across all clusters:
 
 ```bash
-gke-cost-analyzer history 1w --project my-gcp-project --all-clusters
+gke-cost-analyzer history 1w --bigquery-project-id my-gcp-project --all-clusters
 ```
 
 Options:
-- `--project` (required): GCP project ID for BigQuery
+- `--bigquery-project-id`: GCP project ID owning the BigQuery dataset (defaults to the auto-detected environment project; overridden by a fully-qualified `--table`)
 - `--dataset`: BigQuery dataset name (default: "gke_costs")
-- `--table`: BigQuery table name (default: "cost_snapshots")
+- `--table`: BigQuery table name (default: "cost_snapshots"). Accepts a fully-qualified `dataset.table` or `project.dataset.table`, which overrides `--dataset` / `--bigquery-project-id`
 - `--cluster-name`: Filter by cluster name (defaults to auto-detected cluster)
 - `--all-clusters`: Show costs from all clusters (adds a CLUSTER column)
 - `--namespace`: Filter to a specific namespace
@@ -233,9 +240,12 @@ gke-cost-analyzer version
 
 ### Environment auto-detection
 
-`--region`, `--project`, and `--cluster-name` are automatically detected from
+`--region`, the GCP project, and `--cluster-name` are automatically detected from
 the GCE metadata server (when running on GKE) or from the current kubeconfig
-context. Explicit CLI flags always take priority over detected values.
+context. Explicit CLI flags always take priority over detected values. The
+detected project is the default for both BigQuery (`--bigquery-project-id`) and
+Managed Prometheus (`--prometheus-project-id`); set those flags to point either
+subsystem at a different project.
 
 ### Example BigQuery queries
 

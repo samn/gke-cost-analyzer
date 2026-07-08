@@ -9,15 +9,21 @@ import (
 )
 
 var (
-	teamLabel         string
-	workloadLabel     string
-	subtypeLabel      string
-	namespace         string
-	region            string
-	project           string
-	excludeNamespaces []string
-	prometheusURL     string
-	mode              string
+	teamLabel           string
+	workloadLabel       string
+	subtypeLabel        string
+	namespace           string
+	region              string
+	bigqueryProjectID   string
+	prometheusProjectID string
+	excludeNamespaces   []string
+	prometheusURL       string
+	mode                string
+
+	// detectedProject is the GCP project inferred from the environment (GCE
+	// metadata or kubeconfig). It is the default project for both BigQuery and
+	// Prometheus when the use-specific flags are not set.
+	detectedProject string
 )
 
 // newDetector is overridable for testing.
@@ -50,30 +56,29 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&namespace, "namespace", "", "Kubernetes namespace to filter (empty = all)")
 	rootCmd.PersistentFlags().StringVar(&region, "region", "", "GCP region for pricing (auto-detected from environment)")
 	rootCmd.PersistentFlags().StringSliceVar(&excludeNamespaces, "exclude-namespaces", []string{"kube-system", "gmp-system"}, "Namespaces to exclude from pod listing (comma-separated)")
-	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL (defaults to GCP Managed Prometheus when project is available)")
-	rootCmd.PersistentFlags().StringVar(&project, "project", "", "GCP project ID (auto-detected from environment)")
+	rootCmd.PersistentFlags().StringVar(&prometheusURL, "prometheus-url", "", "Prometheus API base URL (defaults to GCP Managed Prometheus when a project is available)")
 	rootCmd.PersistentFlags().StringVar(&mode, "mode", "all", "Cost calculation mode: autopilot, standard, or all")
 }
 
-// applyDefaults fills in missing flag values from environment detection.
-// Explicit CLI flags (non-empty values) are never overwritten. Detection is
-// skipped entirely when every value is already set — it costs up to three
-// metadata-server round trips (1s timeout each when off-GCP).
+// applyDefaults fills in missing flag values from environment detection and
+// records the detected project (for BigQuery/Prometheus defaults and, in
+// record, the project_id attribution). Explicit CLI flags (non-empty values)
+// are never overwritten.
+//
+// Detection always runs (except for version, which is skipped by the caller):
+// the detected project is a distinct value with no backing flag, and record
+// needs it for accurate per-cluster project_id attribution even when every
+// flag is set. The three metadata lookups run concurrently, so the cost is a
+// single ~1s timeout off-GCP.
 func applyDefaults(d *envdefaults.Detector, cmd *cobra.Command) {
-	if region != "" && project != "" && clusterName != "" {
-		return
-	}
 	defaults := d.Detect()
+	detectedProject = defaults.ProjectID
 
 	var applied []string
 
 	if region == "" && defaults.Region != "" {
 		region = defaults.Region
 		applied = append(applied, fmt.Sprintf("region=%s", defaults.Region))
-	}
-	if project == "" && defaults.ProjectID != "" {
-		project = defaults.ProjectID
-		applied = append(applied, fmt.Sprintf("project=%s", defaults.ProjectID))
 	}
 	if clusterName == "" && defaults.ClusterName != "" {
 		clusterName = defaults.ClusterName

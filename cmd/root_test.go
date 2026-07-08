@@ -89,15 +89,9 @@ func TestValidateMode(t *testing.T) {
 }
 
 func TestNewPromClientExplicitURL(t *testing.T) {
-	savedURL := prometheusURL
-	savedProject := project
-	defer func() {
-		prometheusURL = savedURL
-		project = savedProject
-	}()
+	defer resetProjectState()()
 
 	prometheusURL = "http://my-prom:9090"
-	project = ""
 
 	client, err := newPromClient(context.Background())
 	if err != nil {
@@ -109,15 +103,7 @@ func TestNewPromClientExplicitURL(t *testing.T) {
 }
 
 func TestNewPromClientNoProjectNoURL(t *testing.T) {
-	savedURL := prometheusURL
-	savedProject := project
-	defer func() {
-		prometheusURL = savedURL
-		project = savedProject
-	}()
-
-	prometheusURL = ""
-	project = ""
+	defer resetProjectState()()
 
 	client, err := newPromClient(context.Background())
 	if err != nil {
@@ -128,18 +114,12 @@ func TestNewPromClientNoProjectNoURL(t *testing.T) {
 	}
 }
 
-func TestNewPromClientGMPDefault(t *testing.T) {
-	savedURL := prometheusURL
-	savedProject := project
+func TestNewPromClientGMPDefaultFromDetectedProject(t *testing.T) {
 	savedFn := gcpHTTPClientFn
-	defer func() {
-		prometheusURL = savedURL
-		project = savedProject
-		gcpHTTPClientFn = savedFn
-	}()
+	defer func() { gcpHTTPClientFn = savedFn }()
+	defer resetProjectState()()
 
-	prometheusURL = ""
-	project = "my-gcp-project"
+	detectedProject = "my-gcp-project"
 
 	// Mock GCP HTTP client to avoid needing real credentials
 	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
@@ -151,22 +131,40 @@ func TestNewPromClientGMPDefault(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if client == nil {
-		t.Fatal("expected non-nil client when project is available (GMP default)")
+		t.Fatal("expected non-nil client when a project is available (GMP default)")
+	}
+}
+
+func TestNewPromClientGMPUsesExplicitProject(t *testing.T) {
+	savedFn := gcpHTTPClientFn
+	defer func() { gcpHTTPClientFn = savedFn }()
+	defer resetProjectState()()
+
+	// The explicit --prometheus-project-id wins even when a different project
+	// was auto-detected (the BigQuery project must not leak here either).
+	prometheusProjectID = "prom-project"
+	detectedProject = "cluster-project"
+
+	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
+		return &http.Client{}, nil
+	}
+
+	client, err := newPromClient(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("expected non-nil client when --prometheus-project-id is set")
 	}
 }
 
 func TestNewPromClientCustomURLTakesPriority(t *testing.T) {
-	savedURL := prometheusURL
-	savedProject := project
 	savedFn := gcpHTTPClientFn
-	defer func() {
-		prometheusURL = savedURL
-		project = savedProject
-		gcpHTTPClientFn = savedFn
-	}()
+	defer func() { gcpHTTPClientFn = savedFn }()
+	defer resetProjectState()()
 
 	prometheusURL = "http://custom-prom:9090"
-	project = "my-gcp-project"
+	detectedProject = "my-gcp-project"
 
 	// GCP client should NOT be called when custom URL is set
 	gcpHTTPClientFn = func(_ context.Context, _ ...string) (*http.Client, error) {
@@ -187,17 +185,16 @@ func TestValidationErrorsAreUsageErrors(t *testing.T) {
 	// Operator input mistakes must be classifiable so main() doesn't report
 	// them to Sentry as application errors.
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = ""
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 

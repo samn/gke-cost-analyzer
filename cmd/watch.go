@@ -22,6 +22,7 @@ var (
 func init() {
 	watchCmd.Flags().DurationVar(&watchInterval, "interval", 10*time.Second, "Refresh interval")
 	watchCmd.Flags().Float64Var(&trendThreshold, "trend-threshold", 3.0, "Z-score threshold for cost aberration detection (0 to disable)")
+	watchCmd.Flags().StringVar(&prometheusProjectID, "prometheus-project-id", "", "GCP project ID for GCP Managed Prometheus metrics (defaults to the auto-detected environment project)")
 	rootCmd.AddCommand(watchCmd)
 }
 
@@ -95,7 +96,7 @@ func runWatch(cmd *cobra.Command, _ []string) error {
 	}
 
 	_, postFilterNS := listNamespace()
-	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, project, showMode, trendCfg, postFilterNS)
+	model := tui.NewModel(ctx, cancel, lister, autopilotCalc, standardCalc, nodeLister, lc, watchInterval, promClient, prometheusProject(), showMode, trendCfg, postFilterNS)
 	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("running TUI: %w", err)

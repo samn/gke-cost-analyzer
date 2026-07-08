@@ -379,17 +379,16 @@ func TestRecordSnapshotListError(t *testing.T) {
 
 func TestRecordRequiresRegion(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = ""
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
@@ -404,42 +403,39 @@ func TestRecordRequiresRegion(t *testing.T) {
 
 func TestRecordRequiresProject(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = "us-central1"
-	project = ""
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 
 	err := runRecord(rootCmd, nil)
 	if err == nil {
-		t.Fatal("expected error when --project is missing")
+		t.Fatal("expected error when no BigQuery project is available")
 	}
-	if !strings.Contains(err.Error(), "--project") {
-		t.Errorf("error should mention --project, got: %v", err)
+	if !IsUsageError(err) || !strings.Contains(err.Error(), "no BigQuery project") {
+		t.Errorf("error should mention the missing BigQuery project, got: %v", err)
 	}
 }
 
 func TestRecordRequiresClusterName(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = "us-central1"
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = ""
 	recordInterval = 5 * time.Minute
 
@@ -576,17 +572,16 @@ func TestRecordSnapshotWriteError(t *testing.T) {
 
 func TestRecordRejectsNegativeInterval(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = "us-central1"
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = "cluster"
 	recordInterval = -5 * time.Minute
 
@@ -601,17 +596,16 @@ func TestRecordRejectsNegativeInterval(t *testing.T) {
 
 func TestRecordRejectsZeroInterval(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 	}()
+	defer resetProjectState()()
 	region = "us-central1"
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = "cluster"
 	recordInterval = 0
 
@@ -626,21 +620,20 @@ func TestRecordRejectsZeroInterval(t *testing.T) {
 
 func TestRecordOutputFileRequiresDryRun(t *testing.T) {
 	saved := region
-	savedProject := project
 	savedCluster := clusterName
 	savedInterval := recordInterval
 	savedDryRun := dryRun
 	savedOutputFile := outputFile
 	defer func() {
 		region = saved
-		project = savedProject
 		clusterName = savedCluster
 		recordInterval = savedInterval
 		dryRun = savedDryRun
 		outputFile = savedOutputFile
 	}()
+	defer resetProjectState()()
 	region = "us-central1"
-	project = "proj"
+	bigqueryProjectID = "proj"
 	clusterName = "cluster"
 	recordInterval = 5 * time.Minute
 	dryRun = false
